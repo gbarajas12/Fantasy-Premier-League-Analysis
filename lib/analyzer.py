@@ -478,7 +478,7 @@ class Analyzer:
 	def findBestTeam(self, outFn):
 		bestTeamData = TeamData()
 		curTeamData = TeamData()
-		teamCountTbl = [0]*(len(analyzer.teamIdTbl)+1) # map from team id to count of players for that team
+		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
 		self._dfsFindBestTeam(teamCountTbl, positionIdxList, bestTeamData, curTeamData, numConsecutiveBadSearches, outFn)
@@ -501,7 +501,7 @@ class Analyzer:
 		curTeamData.totalCost -= playerToTransfer.nowCost
 		curTeamData.totalPoints -= playerToTransfer.totalPoints
 		
-		teamCountTbl = [0]*(len(analyzer.teamIdTbl)+1) # map from team id to count of players for that team
+		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		for playerData in playerList:
 			if playerData.name != playerToTransfer.name:
 				teamCountTbl[playerData.teamId] += 1
