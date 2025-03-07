@@ -21,7 +21,7 @@ class PlayerGameWeekData:
 		self.statTbl[StatType.TOTAL_POINTS] = 0 # sum of all points in the weeks up to and including this week
 		self.statTbl[StatType.FORM] = 0 # average of points from previous self.numWeeksForForm weeks 
 		self.statTbl[StatType.MEDIAN_POINTS] = 0 # median of points over all game weeks up to and including this week 
-		self.statTbl[StatType.MINUTES_PLAYED] = 0 # number of minutes played this gameweek
+		self.statTbl[StatType.MINUTES_PLAYED] = minutesPlayed # number of minutes played this gameweek
 
 class PlayerData:
 	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId):
@@ -77,6 +77,7 @@ class Analyzer:
 		# number of players per position in a Fantasy team, including subs
 		# order is GoalKeeper, Defender, Midfielder, Forward, Manager
 		self.positionCountTbl = [ 2, 5, 5, 3, 0 ]
+		self.minPositionCountTbl = [ 1, 3, 1, 1, 0 ] # minimum number of players required per position in a game week
 		self.maxConsecutiveBadSearches = 10000000
 		self.seasonStr = '2024-25'
  		# number of weeks before the present to include when gathering data for
@@ -203,7 +204,7 @@ class Analyzer:
 
 	def _getStartWeek(self, numGameWeeks):
 		if self.numPrevWeeksForData == -1 or self.numPrevWeeksForData > numGameWeeks:
-			return  0
+			return 0
 		else:
 			return numGameWeeks - self.numPrevWeeksForData
 	
@@ -225,7 +226,8 @@ class Analyzer:
 				gwData.statTbl[StatType.FORM] = formSum / self.numWeeksForForm
 				gwData.statTbl[StatType.MEDIAN_POINTS] = self._getMedian(pointsList)
 			if self.numPrevWeeksForData == -1:
-				assert pointsSum == playerData.totalPoints
+				if pointsSum != playerData.totalPoints:
+					print("WARNING: Player %s (%s) total points mismatch: %d (reported total) vs. %d (summed total)" % (name, self.teamIdTbl[playerData.teamId], playerData.totalPoints, pointsSum))
 			else:
 				playerData.totalPoints = pointsSum
 	
@@ -237,7 +239,7 @@ class Analyzer:
 		tempList.sort(key=lambda x: x[0], reverse=True) # sort entries by player week statVal
 		result[:] = tempList.copy()
 	
-	def _getBestTeamByStat(self, statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekCaptain):
+	def _getBestTeamByStat(self, statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekSubs, weekCaptain):
 		numGameWeeks = len(teamData.positionTbl[0][0].gameWeekTbl)
 		assert numGameWeeks > weekIdx, "Error: asked for data for week idx: %d, but we only have data for %d weeks!" % (weekIdx, numGameWeeks)
 		# get list of players fir each position, sorted by decreasing statVal for this week
@@ -263,30 +265,76 @@ class Analyzer:
 		remainingPlayerList.sort(key=lambda x: x[0], reverse=True)
 		for i in range(5):
 			weekTeam.append(remainingPlayerList[i][1])
+		# add the remaining players as subs
+		for i in remainingPlayerList[5:]:
+			weekSubs.append(i[1])
+		weekSubs.append(keeperList[1][1])
 		# now choose the captain based on the chosen stat type
 		captainSortedWeekTeam = list()
 		self._getStatSortedPlayerListForWeek(statTypeForCaptain, weekIdx, weekTeam, captainSortedWeekTeam)
-		return captainSortedWeekTeam[0][1]
-	
-	def _getTeamPointsForGameWeek(self, weekIdx, weekTeam, weekCaptain):
+		return (captainSortedWeekTeam[0][1], captainSortedWeekTeam[1][1])
+
+	def _getTeamPointsForGameWeek(self, weekIdx, weekTeam, weekSubs, weekCaptain, weekViceCaptain):
+		finalWeekTeam = list() # final list of players selected after any substitutions
 		result = 0
+		posCountTbl = [0, 0, 0, 0] # number of players who did play, per position
 		for playerData in weekTeam:
-			result += playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-		# add the captain's week points to double-count them
-		result += weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+			if playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
+				result += playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+				posCountTbl[playerData.positionId-1] += 1
+				finalWeekTeam.append(playerData)
+
+		usedSubIdxs = set()
+		# first, try to add subs to fill missing position quotas
+		for i in range(len(posCountTbl)):
+			for j in range(len(weekSubs)):
+				if posCountTbl[i] >= self.minPositionCountTbl[i]:
+					break
+				if j not in usedSubIdxs:
+					if weekSubs[j].positionId-1 == i:
+						result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+						usedSubIdxs.add(j)
+						posCountTbl[i] += 1
+						finalWeekTeam.append(weekSubs[j])
+
+		# next, try to add subs in order of priority
+		for j in range(len(weekSubs)):
+			if len(finalWeekTeam) == 11:
+				break
+			if j not in usedSubIdxs:
+				if weekSubs[j].positionId == 1:
+					continue # don't add extra keeper
+				result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+				usedSubIdxs.add(j)
+				posCountTbl[weekSubs[j].positionId-1] += 1
+				finalWeekTeam.append(weekSubs[j])
+		# replace week team with final week team
+		weekTeam[:] = finalWeekTeam.copy()
+		
+		# add the captain's week points to double-count them. If captain did not play,
+		# add vice captain's points instead
+		if weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] == 0:
+			result += weekViceCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+		else:
+			result += weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 		return result
 	
-	def _writeTeamWeekPerformanceToFile(self, weekIdx, totalPoints, weekPoints, weekTeam, weekCaptain, fOut):
+	def _writeTeamWeekPerformanceToFile(self, weekIdx, totalPoints, weekPoints, weekTeam, weekSubs, weekCaptain, weekViceCaptain, fOut):
 		fOut.write("Week: %d\n" % (weekIdx+1))
 		fOut.write("Team Points This Week: %d\n" % weekPoints)
 		fOut.write("Total Team Points After This Week: %d\n" % totalPoints)
 		fOut.write("Captain: %s\n" % weekCaptain.name)
-		fOut.write("Player\tWeekPoints\n")
+		fOut.write("Vice Captain: %s\n" % weekViceCaptain.name)
+		fOut.write("Player\tWeekPoints\tMinutesPlayed\n")
 		for playerData in weekTeam:
 			weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-			if playerData.name == weekCaptain.name:
-				weekPoints += weekPoints
-			fOut.write("%s\t%d\n" % (playerData.name, weekPoints))
+			minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
+			fOut.write("%s\t%d\t%d\n" % (playerData.name, weekPoints, minutesPlayed))
+		fOut.write("SUBS:\n")
+		for playerData in weekSubs:
+			weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+			minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
+			fOut.write("%s\t%d\t%d\n" % (playerData.name, weekPoints, minutesPlayed))
 		fOut.write("\n")
 	
 	# Determine the total number of points the team has acheived if the strategy
@@ -302,19 +350,21 @@ class Analyzer:
 		numGameWeeks = len(teamData.positionTbl[0][0].gameWeekTbl)
 		totalPoints = 0
 		weekTeam = list() # subset of players for current week
+		weekSubs = list() # substitutes, ordered by decreasing stat of choice
 		weekCaptain = None
-		weekCaptain = self._getBestTeamByStat(StatType.COST, StatType.COST, 0, teamData, weekTeam, weekCaptain)
+		weekViceCaptain = None
+		(weekCaptain, weekViceCaptain) = self._getBestTeamByStat(StatType.COST, StatType.COST, 0, teamData, weekTeam, weekSubs, weekCaptain)
 		# for each week, find number of points for all players in that week's team
 		startWeek = self._getStartWeek(numGameWeeks)
 		for weekIdx in range(startWeek, numGameWeeks):
-			weekPoints = self._getTeamPointsForGameWeek(weekIdx, weekTeam, weekCaptain)
-			#print("\t%d" % weekPoints)
+			weekPoints = self._getTeamPointsForGameWeek(weekIdx, weekTeam, weekSubs, weekCaptain, weekViceCaptain)
 			totalPoints += weekPoints
 			# choose team for next week
 			if DebugFn != None:
-				self._writeTeamWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekTeam, weekCaptain, fOut)
+				self._writeTeamWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekTeam, weekSubs, weekCaptain, weekViceCaptain, fOut)
 			weekTeam = list()
-			weekCaptain = self._getBestTeamByStat(statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekCaptain)
+			weekSubs = list()
+			(weekCaptain, weekViceCaptain) = self._getBestTeamByStat(statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekSubs, weekCaptain)
 	
 		if DebugFn != None:
 			fOut.close()
