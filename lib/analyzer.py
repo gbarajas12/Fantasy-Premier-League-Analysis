@@ -13,15 +13,15 @@ class StatType(Enum):
 	MINUTES_PLAYED = 5
 
 class PlayerGameWeekData:
-	def __init__(self, weekIdx, weekPoints, weekCost, minutesPlayed):
+	def __init__(self, weekIdx):
 		self.statTbl = dict()
 		self.weekIdx = weekIdx
-		self.statTbl[StatType.WEEK_POINTS] = weekPoints
-		self.statTbl[StatType.COST] = weekCost # cost of the player at the start of this week
+		self.statTbl[StatType.WEEK_POINTS] = 0
+		self.statTbl[StatType.COST] = 0 # cost of the player at the start of this week
 		self.statTbl[StatType.TOTAL_POINTS] = 0 # sum of all points in the weeks up to and including this week
 		self.statTbl[StatType.FORM] = 0 # average of points from previous self.numWeeksForForm weeks 
 		self.statTbl[StatType.MEDIAN_POINTS] = 0 # median of points over all game weeks up to and including this week 
-		self.statTbl[StatType.MINUTES_PLAYED] = minutesPlayed # number of minutes played this gameweek
+		self.statTbl[StatType.MINUTES_PLAYED] = 0 # number of minutes played this gameweek
 
 class PlayerData:
 	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId):
@@ -33,21 +33,16 @@ class PlayerData:
 		self.nowCost = nowCost
 		self.teamId = teamId
 		self.positionId = positionId
-		self.gameWeekTbl = list() # map from game week idx (zero-indexed) to PlayerGameWeekData 
+		self.gameWeekTbl = dict() # map from game week idx to PlayerGameWeekData 
 	def copyTo(self, other):
 		other = PlayerData(self.firstName, self.lastName, self.playerId, self.totalPoints, self.nowCost, self.teamId, self.positionId)
 		other.gameWeekTbl[:] = self.gameWeekTbl.copy()
-	# If no entry at position weekIdx-1, creates a new entry with the inputs specified.
-	# Else, updates the entry for the week (this could happen for double gameweek).
+	# Updates the entry for the week (this could happen for double gameweek).
 	def updateGameWeekTbl(self, weekIdx, weekPoints, weekCost, minutesPlayed):
-		if len(self.gameWeekTbl) <= weekIdx-1:
-			for i in range(len(self.gameWeekTbl), weekIdx-1):
-				self.gameWeekTbl.append(PlayerGameWeekData(weekIdx, 0, 0, 0))
-			self.gameWeekTbl.append(PlayerGameWeekData(weekIdx, weekPoints, weekCost, minutesPlayed))
-		else:
-			self.gameWeekTbl[weekIdx-1].statTbl[StatType.WEEK_POINTS] += weekPoints
-			self.gameWeekTbl[weekIdx-1].statTbl[StatType.COST] = weekCost
-			self.gameWeekTbl[weekIdx-1].statTbl[StatType.MINUTES_PLAYED] += minutesPlayed
+		gwData = self.gameWeekTbl.setdefault(weekIdx, PlayerGameWeekData(weekIdx))
+		gwData.statTbl[StatType.WEEK_POINTS] += weekPoints
+		gwData.statTbl[StatType.COST] = weekCost
+		gwData.statTbl[StatType.MINUTES_PLAYED] += minutesPlayed
 			
 
 class TeamData:
@@ -70,7 +65,7 @@ class Analyzer:
 		self.playerNameTbl = dict() # map from player name to PlayerData
 		self.playerPositionTbl = list() # map from position idx to list of all PlayerData for that position
 		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD", 5 : "MGR" }
-		self.playersToExclude = { 'Amad Diallo' }
+		self.playersToExclude = {}
 		self.budget = 1000 # in hundreds of thousands of Euros
 		self.maxNumPlayersPerTeam = 3
 		self.numWeeksForForm = 3 # number of weeks before current week to calculate form
@@ -79,7 +74,7 @@ class Analyzer:
 		self.positionCountTbl = [ 2, 5, 5, 3, 0 ]
 		self.minPositionCountTbl = [ 1, 3, 1, 1, 0 ] # minimum number of players required per position in a game week
 		self.maxConsecutiveBadSearches = 10000000
-		self.seasonStr = '2024-25'
+		self.seasonStr = '2025-26'
  		# number of weeks before the present to include when gathering data for
 		# analysis. If -1 is specified, or if the number is larger than the total
 		# number of weeks in the database, all week data will be used.
@@ -174,25 +169,28 @@ class Analyzer:
 					minutesPlayed = int(tokens[colLabelTbl[minutesLabel]])
 					totalPoints = int(tokens[colLabelTbl[totPointsLabel]])
 					nowCost = int(tokens[colLabelTbl[nowCostLabel]])
-					playerData = self.playerNameTbl[playerName]
+					playerData = self.playerNameTbl.get(playerName)
+					if playerData == None:
+						print("Warning: no data for %s" % playerName)
+						continue
 					playerData.updateGameWeekTbl(weekIdx, totalPoints, nowCost, minutesPlayed)
-		# fill in any missing game week data (this could happen if a match is postponed)
-		for name,playerData in self.playerNameTbl.items():
-			if len(playerData.gameWeekTbl) != weekIdx:
-				# put in blank data for the missing weeks
-				testIdx = 0
-				temp = playerData.gameWeekTbl.copy()
-				playerData.gameWeekTbl.clear()
-				prevCost = 0
-				for gwData in temp:
-					testIdx += 1
-					if gwData.weekIdx > testIdx:
-						# add blank data up until current weekIdx
-						for i in range(testIdx, gwData.weekIdx):
-							playerData.gameWeekTbl.append(PlayerGameWeekData(i, 0, prevCost, 0))
-						testIdx = gwData.weekIdx
-					playerData.gameWeekTbl.append(PlayerGameWeekData(gwData.weekIdx, gwData.statTbl[StatType.WEEK_POINTS], gwData.statTbl[StatType.COST], gwData.statTbl[StatType.MINUTES_PLAYED]))
-					prevCost = gwData.statTbl[StatType.COST]
+		## fill in any missing game week data (this could happen if a match is postponed)
+		#for name,playerData in self.playerNameTbl.items():
+		#	if len(playerData.gameWeekTbl) != weekIdx:
+		#		# put in blank data for the missing weeks
+		#		testIdx = 0
+		#		temp = playerData.gameWeekTbl.copy()
+		#		playerData.gameWeekTbl.clear()
+		#		prevCost = 0
+		#		for gwData in temp:
+		#			testIdx += 1
+		#			if gwData.weekIdx > testIdx:
+		#				# add blank data up until current weekIdx
+		#				for i in range(testIdx, gwData.weekIdx):
+		#					playerData.gameWeekTbl.append(PlayerGameWeekData(i, 0, prevCost, 0))
+		#				testIdx = gwData.weekIdx
+		#			playerData.gameWeekTbl.append(PlayerGameWeekData(gwData.weekIdx, gwData.statTbl[StatType.WEEK_POINTS], gwData.statTbl[StatType.COST], gwData.statTbl[StatType.MINUTES_PLAYED]))
+		#			prevCost = gwData.statTbl[StatType.COST]
 
 	def _getMedian(self, numList):
 		sortedList = sorted(numList)
@@ -204,9 +202,9 @@ class Analyzer:
 
 	def _getStartWeek(self, numGameWeeks):
 		if self.numPrevWeeksForData == -1 or self.numPrevWeeksForData > numGameWeeks:
-			return 0
+			return 1
 		else:
-			return numGameWeeks - self.numPrevWeeksForData
+			return numGameWeeks - self.numPrevWeeksForData + 1
 	
 	def _examineGameWeekData(self):
 		for name,playerData in self.playerNameTbl.items():
@@ -214,14 +212,19 @@ class Analyzer:
 			formSum = 0
 			pointsList = list() # list of points for all weeks up to current week
 			startWeek = self._getStartWeek(len(playerData.gameWeekTbl))
-			for idx in range(startWeek, len(playerData.gameWeekTbl)):
-				gwData = playerData.gameWeekTbl[idx]
+			for weekIdx in range(startWeek, len(playerData.gameWeekTbl)+1):
+				gwData = playerData.gameWeekTbl.get(weekIdx)
+				if gwData == None:
+					continue
 				weekPoints = gwData.statTbl[StatType.WEEK_POINTS]
 				pointsSum += weekPoints
 				pointsList.append(weekPoints)
 				gwData.statTbl[StatType.TOTAL_POINTS] = pointsSum
-				if idx >= self.numWeeksForForm:
-					formSum -= playerData.gameWeekTbl[idx - self.numWeeksForForm].statTbl[StatType.WEEK_POINTS]
+				if weekIdx >= self.numWeeksForForm:
+					prevWeekIdx = weekIdx - self.numWeeksForForm
+					prevWeekData = playerData.gameWeekTbl.get(prevWeekIdx)
+					if prevWeekData != None:
+						formSum -= prevWeekData.statTbl[StatType.WEEK_POINTS]
 				formSum += gwData.statTbl[StatType.WEEK_POINTS]
 				gwData.statTbl[StatType.FORM] = formSum / self.numWeeksForForm
 				gwData.statTbl[StatType.MEDIAN_POINTS] = self._getMedian(pointsList)
@@ -231,17 +234,18 @@ class Analyzer:
 			else:
 				playerData.totalPoints = pointsSum
 	
-	def _getStatSortedPlayerListForWeek(self, statType, weekIdx, playerList,  result):
+	def _getStatSortedPlayerListForWeek(self, statType, weekIdx, playerList, result):
 		tempList = list() # list of (weekStat, playerData) for each player of the position in the given week
 		for playerData in playerList:
-			statVal = playerData.gameWeekTbl[weekIdx].statTbl[statType]
-			tempList.append((statVal, playerData))
+			if weekIdx in playerData.gameWeekTbl:
+				statVal = playerData.gameWeekTbl[weekIdx].statTbl[statType]
+				tempList.append((statVal, playerData))
 		tempList.sort(key=lambda x: x[0], reverse=True) # sort entries by player week statVal
 		result[:] = tempList.copy()
 	
 	def _getBestTeamByStat(self, statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekSubs, weekCaptain):
 		numGameWeeks = len(teamData.positionTbl[0][0].gameWeekTbl)
-		assert numGameWeeks > weekIdx, "Error: asked for data for week idx: %d, but we only have data for %d weeks!" % (weekIdx, numGameWeeks)
+		assert numGameWeeks >= weekIdx, "Error: asked for data for week idx: %d, but we only have data for %d weeks!" % (weekIdx, numGameWeeks)
 		# get list of players fir each position, sorted by decreasing statVal for this week
 		# each element is (statVal, playerData)
 		keeperList = list()
@@ -254,21 +258,26 @@ class Analyzer:
 		self._getStatSortedPlayerListForWeek(statTypeForTeam, weekIdx, teamData.positionTbl[3], forwardList)
 		# formation rules: must have 1 goalie, at least: 3 defenders, 1 mid, 1 forward
 		# choose highest statVal goalie for week 1
-		weekTeam.append(keeperList[0][1])
-		for i in range(3):
+		minNumDefenders = min(len(defenderList), self.minPositionCountTbl[1])
+		if len(keeperList) != 0:
+			weekTeam.append(keeperList[0][1])
+		for i in range(minNumDefenders):
 			weekTeam.append(defenderList[i][1])
-		weekTeam.append(midfieldList[0][1])
-		weekTeam.append(forwardList[0][1])
+		if len(midfieldList) != 0:
+			weekTeam.append(midfieldList[0][1])
+		if len(forwardList) != 0:
+			weekTeam.append(forwardList[0][1])
 		# now we need 5 more players, which could be defenders, mid, or forwards.
 		# Choose the best out of the remaining options.
-		remainingPlayerList = defenderList[3:] + midfieldList[1:] + forwardList[1:]
+		remainingPlayerList = defenderList[minNumDefenders:] + midfieldList[1:] + forwardList[1:]
 		remainingPlayerList.sort(key=lambda x: x[0], reverse=True)
-		for i in range(5):
+		for i in range(min(len(remainingPlayerList), 5)):
 			weekTeam.append(remainingPlayerList[i][1])
 		# add the remaining players as subs
 		for i in remainingPlayerList[5:]:
 			weekSubs.append(i[1])
-		weekSubs.append(keeperList[1][1])
+		if len(keeperList) > 1:
+			weekSubs.append(keeperList[1][1])
 		# now choose the captain based on the chosen stat type
 		captainSortedWeekTeam = list()
 		self._getStatSortedPlayerListForWeek(statTypeForCaptain, weekIdx, weekTeam, captainSortedWeekTeam)
@@ -279,7 +288,7 @@ class Analyzer:
 		result = 0
 		posCountTbl = [0, 0, 0, 0] # number of players who did play, per position
 		for playerData in weekTeam:
-			if playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
+			if weekIdx in playerData.gameWeekTbl and playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
 				result += playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 				posCountTbl[playerData.positionId-1] += 1
 				finalWeekTeam.append(playerData)
@@ -292,10 +301,11 @@ class Analyzer:
 					break
 				if j not in usedSubIdxs:
 					if weekSubs[j].positionId-1 == i:
-						result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-						usedSubIdxs.add(j)
-						posCountTbl[i] += 1
-						finalWeekTeam.append(weekSubs[j])
+						if weekIdx in weekSubs[j].gameWeekTbl:
+							result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+							usedSubIdxs.add(j)
+							posCountTbl[i] += 1
+							finalWeekTeam.append(weekSubs[j])
 
 		# next, try to add subs in order of priority
 		for j in range(len(weekSubs)):
@@ -304,18 +314,20 @@ class Analyzer:
 			if j not in usedSubIdxs:
 				if weekSubs[j].positionId == 1:
 					continue # don't add extra keeper
-				result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-				usedSubIdxs.add(j)
-				posCountTbl[weekSubs[j].positionId-1] += 1
-				finalWeekTeam.append(weekSubs[j])
+				if weekIdx in weekSubs[j].gameWeekTbl:
+					result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+					usedSubIdxs.add(j)
+					posCountTbl[weekSubs[j].positionId-1] += 1
+					finalWeekTeam.append(weekSubs[j])
 		# replace week team with final week team
 		weekTeam[:] = finalWeekTeam.copy()
 		
 		# add the captain's week points to double-count them. If captain did not play,
 		# add vice captain's points instead
-		if weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] == 0:
-			result += weekViceCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-		else:
+		if weekIdx not in weekCaptain.gameWeekTbl or weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] == 0:
+			if weekIdx in weekViceCaptain.gameWeekTbl:
+				result += weekViceCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+		elif weekIdx in weekCaptain.gameWeekTbl:
 			result += weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 		return result
 	
@@ -327,13 +339,21 @@ class Analyzer:
 		fOut.write("Vice Captain: %s\n" % weekViceCaptain.name)
 		fOut.write("Player\tWeekPoints\tMinutesPlayed\n")
 		for playerData in weekTeam:
-			weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-			minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
+			if weekIdx in playerData.gameWeekTbl:
+				weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+				minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
+			else:
+				weekPoints = 0
+				minutesPlayed = 0
 			fOut.write("%s\t%d\t%d\n" % (playerData.name, weekPoints, minutesPlayed))
 		fOut.write("SUBS:\n")
 		for playerData in weekSubs:
-			weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-			minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
+			if weekIdx in playerData.gameWeekTbl:
+				weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+				minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
+			else:
+				weekPoints = 0
+				minutesPlayed = 0
 			fOut.write("%s\t%d\t%d\n" % (playerData.name, weekPoints, minutesPlayed))
 		fOut.write("\n")
 	
@@ -353,7 +373,7 @@ class Analyzer:
 		weekSubs = list() # substitutes, ordered by decreasing stat of choice
 		weekCaptain = None
 		weekViceCaptain = None
-		(weekCaptain, weekViceCaptain) = self._getBestTeamByStat(StatType.COST, StatType.COST, 0, teamData, weekTeam, weekSubs, weekCaptain)
+		(weekCaptain, weekViceCaptain) = self._getBestTeamByStat(StatType.COST, StatType.COST, 1, teamData, weekTeam, weekSubs, weekCaptain)
 		# for each week, find number of points for all players in that week's team
 		startWeek = self._getStartWeek(numGameWeeks)
 		for weekIdx in range(startWeek, numGameWeeks):
@@ -444,6 +464,7 @@ class Analyzer:
 				fOut.write("\n")
 		assert totalPoints == bestTeamData.totalPoints
 		totalStrategyPoints = self._evaluateStrategy(StatType.FORM, StatType.FORM, bestTeamData)
+		#totalStrategyPoints = 0 # FIXME: remove and uncomment above
 		print("%d %d %d" % (totalPoints, bestTeamData.totalCost, totalStrategyPoints))
 	
 	def _dfsFindBestTeam(self, teamCountTbl, curIdxList, bestTeamData, curTeamData, numConsecutiveBadSearches, outFn=None):
@@ -582,6 +603,7 @@ class Analyzer:
 		# find metadata of team
 		self._findCustomTeamMetadata(curTeamData)
 		self.budget += curTeamData.totalCost
+		print("Budget: %.1fm euros" % (self.budget/10.0))
 		transferOptions = list() # list of (origPlayer, newPlayer, pointsImprovement)
 		# add all players from current team to exclusion list
 		origExclusionList = self.playersToExclude.copy()
