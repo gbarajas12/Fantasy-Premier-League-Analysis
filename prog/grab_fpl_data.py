@@ -11,4 +11,4 @@ if __name__ == '__main__':
 	data = requests.get(fplUrl+'bootstrap-static/').json()
 	outFn = 'fpl_data.json'
 	with open(outFn, 'w') as fOut:
-		json.dump(outFn, fOut)
+		json.dump(data, fOut)
