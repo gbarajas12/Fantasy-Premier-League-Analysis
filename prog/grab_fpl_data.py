@@ -8,7 +8,17 @@ if __name__ == '__main__':
 		sys.exit()
 
 	fplUrl = 'https://fantasy.premierleague.com/api/'
-	data = requests.get(fplUrl+'bootstrap-static/').json()
-	outFn = 'fpl_data.json'
-	with open(outFn, 'w') as fOut:
+	data = requests.get(f"{fplUrl}bootstrap-static/").json()
+	topOutFn = 'fpl_top_data.json'
+	gameweekFn = 'fpl_gameweek_data.json'
+	with open(topOutFn, 'w') as fOut:
 		json.dump(data, fOut)
+
+	# write gameweek data to a file
+	gameweekDataTbl = {}
+	with open(gameweekFn, 'w') as fOut:
+		for event in data['events']:
+			gameweekId = event['id']
+			gameweekDataTbl[gameweekId] = requests.get(f"{fplUrl}event/{gameweekId}/live/").json()
+		json.dump(gameweekDataTbl, fOut)
+		
