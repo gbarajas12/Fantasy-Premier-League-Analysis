@@ -1,6 +1,7 @@
 import sys
 import os
 from enum import Enum
+import json
 
 DebugFn = "week_data.txt"
 #self.positionCountTbl = [ 2, 3, 5, 3 ]
@@ -88,6 +89,12 @@ class Analyzer:
 		# check that all necessary labels were found
 		for label,colIdx in colLabelTbl.items():
 			assert colIdx != None, "Error: could not find column label %s in file %s" % (label, fn)
+
+	def _readTeamDataFromJSON(self, data):
+		for teamData in data['teams']:
+			teamName = teamData['name']
+			teamId = teamData['id']
+			self.teamIdTbl[teamId] = teamName
 	
 	def _readTeamData(self, fn):
 		teamIdLabel = "id"
@@ -106,6 +113,17 @@ class Analyzer:
 				teamName = tokens[colLabelTbl[teamNameLabel]]
 				self.teamIdTbl[teamId] = teamName
 	
+	def _readPlayerDataFromJSON(self, data):
+		for playerData in data['elements']:
+			firstName = playerData['first_name']
+			lastName = playerData['second_name']
+			playerId = playerData['id']
+			totalPoints = playerData['total_points']
+			nowCost = playerData['now_cost']
+			teamId = playerData['team']
+			positionId = playerData['element_type']
+			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
+
 	def _readPlayerData(self, fn):
 		totPointsLabel = "total_points"
 		playerIdLabel = "id"
@@ -139,6 +157,26 @@ class Analyzer:
 				teamId = int(tokens[colLabelTbl[teamIdLabel]])
 				positionId = int(tokens[colLabelTbl[positionIdLabel]])
 				self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
+
+	def _readGameWeekDataFromJSON(self, topLevelData, allGameweekData):
+		for event in topLevelData['events']:
+			gameweekId = event['id']
+			gameweekData = allGameweekData[str(gameweekId)]
+			weekIdx = 0
+			for jsonPlayerData in gameweekData['elements']:
+				weekIdx += 1
+				playerId = jsonPlayerData['id']
+				firstName = topLevelData['elements'][playerId]['first_name']
+				lastName = topLevelData['elements'][playerId]['second_name']
+				playerName = "%s %s" % (firstName, lastName)
+				minutesPlayed = int(jsonPlayerData['stats']['minutes'])
+				totalPoints = int(jsonPlayerData['stats']['total_points'])
+				playerData = self.playerNameTbl.get(playerName)
+				if playerData == None:
+					print("Warning: no data for %s" % playerName)
+					continue
+				nowCost = playerData.nowCost # FIXME: replace with actual cost this week
+				playerData.updateGameWeekTbl(weekIdx, totalPoints, nowCost, minutesPlayed)
 	
 	def _readGameWeekData(self, gameWeekTopDir):
 		colLabelTbl = dict() # map from column label to column idx (0-indexed)
@@ -535,7 +573,15 @@ class Analyzer:
 				positionStr = self.positionIdTbl[posIdx+1]
 				assert 0, "Error: incorrect number of %s: %d. Should be %d" % (positionStr, len(curTeamData.positionTbl[posIdx]), self.positionCountTbl[posIdx])
 		
-
+	def readDataFromJSON(self, topLevelJsonFn, gameweekJsonFn):
+		fTop = open(topLevelJsonFn, 'r')
+		topLevelData = json.load(fTop)
+		self._readTeamDataFromJSON(topLevelData)
+		self._readPlayerDataFromJSON(topLevelData) # read cumulative data for each player
+		fGw = open(gameweekJsonFn, 'r')
+		gameweekData = json.load(fGw)
+		self._readGameWeekDataFromJSON(topLevelData, gameweekData)
+	
 	def readData(self, fplTopDir):
 		teamDataFn = "%s/data/%s/teams.csv" % (fplTopDir, self.seasonStr)
 		rawPlayerDataFn = '%s/data/%s/players_raw.csv' % (fplTopDir, self.seasonStr)

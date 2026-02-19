@@ -16,7 +16,8 @@ if __name__ == '__main__':
 		outFn = sys.argv[3]
 
 	analyzer = analyzer.Analyzer()
-	analyzer.readData(fplTopDir)
+	#analyzer.readData(fplTopDir)
+	analyzer.readDataFromJSON('fpl_top_data.json', 'fpl_gameweek_data.json')
 	if teamFn == None:
 		analyzer.findBestTeam(outFn)
 	else:
