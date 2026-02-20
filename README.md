@@ -1,1 +1,1 @@
-This repository is meant to be used to analyze Fantasy premier league data. It reads in data from the separate github repository vaastav/Fantasy-Premier-League and can perform analysis. The vaastav repository, which I do not own, must be checked out locally and pointed to by the programs in this repository. 
+This repository is meant to be used to analyze Fantasy premier league data. It reads in data from the official FPL API and can perform analysis. Previously it read in data from the separate github repository vaastav/Fantasy-Premier-League, which I do not own. 
