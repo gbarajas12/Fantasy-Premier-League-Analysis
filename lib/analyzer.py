@@ -98,23 +98,6 @@ class Analyzer:
 			teamId = teamData['id']
 			self.teamIdTbl[teamId] = teamName
 	
-	def _readTeamData(self, fn):
-		teamIdLabel = "id"
-		teamNameLabel = "name"
-		colLabelTbl = dict() # map from column label to column idx (0-indexed)
-		colLabelTbl[teamIdLabel] = None
-		colLabelTbl[teamNameLabel] = None
-		with open(fn,'r') as fIn:
-			lines = fIn.readlines()
-			self._readColumnLabels(lines[0], fn, colLabelTbl)
-			for line in lines[1:]:
-				tokens = line.split(',')
-				if len(tokens) == 0:
-					continue
-				teamId = int(tokens[colLabelTbl[teamIdLabel]])
-				teamName = tokens[colLabelTbl[teamNameLabel]]
-				self.teamIdTbl[teamId] = teamName
-	
 	def _readPlayerDataFromJSON(self, data):
 		for playerData in data['elements']:
 			firstName = playerData['first_name']
@@ -125,40 +108,6 @@ class Analyzer:
 			teamId = playerData['team']
 			positionId = playerData['element_type']
 			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
-
-	def _readPlayerData(self, fn):
-		totPointsLabel = "total_points"
-		playerIdLabel = "id"
-		nowCostLabel = "now_cost"
-		firstNameLabel = "first_name"
-		secondNameLabel = "second_name"
-		teamIdLabel = "team"
-		positionIdLabel = "element_type"
-		colLabelTbl = dict() # map from column label to column idx (0-indexed)
-		colLabelTbl[totPointsLabel] = None
-		colLabelTbl[playerIdLabel] = None
-		colLabelTbl[nowCostLabel] = None
-		colLabelTbl[firstNameLabel] = None
-		colLabelTbl[secondNameLabel] = None
-		colLabelTbl[teamIdLabel] = None
-		colLabelTbl[positionIdLabel] = None
-		with open(fn,'r') as fIn:
-			lines = fIn.readlines()
-			# read column labels on first line
-			self._readColumnLabels(lines[0], fn, colLabelTbl)
-			# read in all player data
-			for line in lines[1:]:
-				tokens = line.split(',')
-				if len(tokens) == 0:
-					continue
-				firstName = tokens[colLabelTbl[firstNameLabel]]
-				lastName = tokens[colLabelTbl[secondNameLabel]]
-				playerId = int(tokens[colLabelTbl[playerIdLabel]])
-				totalPoints = int(tokens[colLabelTbl[totPointsLabel]])
-				nowCost = int(tokens[colLabelTbl[nowCostLabel]])
-				teamId = int(tokens[colLabelTbl[teamIdLabel]])
-				positionId = int(tokens[colLabelTbl[positionIdLabel]])
-				self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
 
 	def _readGameWeekDataFromJSON(self, topLevelData, allGameweekData):
 		# make map from player ID to JSON top-level player data
@@ -185,58 +134,6 @@ class Analyzer:
 				nowCost = playerData.nowCost # FIXME: replace with actual cost this week
 				playerData.updateGameWeekTbl(gameweekId, totalPoints, nowCost, minutesPlayed)
 	
-	def _readGameWeekData(self, gameWeekTopDir):
-		colLabelTbl = dict() # map from column label to column idx (0-indexed)
-		totPointsLabel = "total_points"
-		nowCostLabel = "value"
-		minutesLabel = "minutes"
-		playerNameLabel = "name"
-		colLabelTbl[totPointsLabel] = None
-		colLabelTbl[nowCostLabel] = None
-		colLabelTbl[minutesLabel] = None
-		colLabelTbl[playerNameLabel] = None
-		weekIdx = 0
-		while True:
-			weekIdx += 1
-			weekFn = '%s/gw%d.csv' % (gameWeekTopDir, weekIdx)
-			if not os.path.isfile(weekFn):
-				weekIdx -= 1
-				print("Read data for %d game weeks" % weekIdx)
-				break
-			with open(weekFn,'r') as fIn:
-				lines = fIn.readlines()
-				self._readColumnLabels(lines[0], weekFn, colLabelTbl)
-				for line in lines[1:]:
-					tokens = line.split(',')
-					if len(tokens) == 0:
-						continue
-					playerName = tokens[colLabelTbl[playerNameLabel]]
-					minutesPlayed = int(tokens[colLabelTbl[minutesLabel]])
-					totalPoints = int(tokens[colLabelTbl[totPointsLabel]])
-					nowCost = int(tokens[colLabelTbl[nowCostLabel]])
-					playerData = self.playerNameTbl.get(playerName)
-					if playerData == None:
-						print("Warning: no data for %s" % playerName)
-						continue
-					playerData.updateGameWeekTbl(weekIdx, totalPoints, nowCost, minutesPlayed)
-		## fill in any missing game week data (this could happen if a match is postponed)
-		#for name,playerData in self.playerNameTbl.items():
-		#	if len(playerData.gameWeekTbl) != weekIdx:
-		#		# put in blank data for the missing weeks
-		#		testIdx = 0
-		#		temp = playerData.gameWeekTbl.copy()
-		#		playerData.gameWeekTbl.clear()
-		#		prevCost = 0
-		#		for gwData in temp:
-		#			testIdx += 1
-		#			if gwData.weekIdx > testIdx:
-		#				# add blank data up until current weekIdx
-		#				for i in range(testIdx, gwData.weekIdx):
-		#					playerData.gameWeekTbl.append(PlayerGameWeekData(i, 0, prevCost, 0))
-		#				testIdx = gwData.weekIdx
-		#			playerData.gameWeekTbl.append(PlayerGameWeekData(gwData.weekIdx, gwData.statTbl[StatType.WEEK_POINTS], gwData.statTbl[StatType.COST], gwData.statTbl[StatType.MINUTES_PLAYED]))
-		#			prevCost = gwData.statTbl[StatType.COST]
-
 	def _getMedian(self, numList):
 		sortedList = sorted(numList)
 		midIdx = len(sortedList) // 2
@@ -594,16 +491,6 @@ class Analyzer:
 		fGw = open(gameweekJsonFn, 'r')
 		gameweekData = json.load(fGw)
 		self._readGameWeekDataFromJSON(topLevelData, gameweekData)
-		self._examineGameWeekData()
-		self._createPlayerPositionTbl()
-	
-	def readData(self, fplTopDir):
-		teamDataFn = "%s/data/%s/teams.csv" % (fplTopDir, self.seasonStr)
-		rawPlayerDataFn = '%s/data/%s/players_raw.csv' % (fplTopDir, self.seasonStr)
-		gameWeekTopDir = '%s/data/%s/gws' % (fplTopDir, self.seasonStr)
-		self._readTeamData(teamDataFn)
-		self._readPlayerData(rawPlayerDataFn) # read cumulative data for each player
-		self._readGameWeekData(gameWeekTopDir)
 		self._examineGameWeekData()
 		self._createPlayerPositionTbl()
 
