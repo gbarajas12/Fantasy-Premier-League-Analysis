@@ -47,11 +47,11 @@ class PlayerData:
 			
 
 class TeamData:
-	def __init__(self):
+	def __init__(self, numPositions):
 		self.positionTbl = list() # map from position idx to list of players for that position
 		self.totalCost = 0
 		self.totalPoints = 0
-		for i in range(5):
+		for i in range(numPositions):
 			self.positionTbl.append(list())
 	def copyTo(self, other):
 		other.positionTbl = list()
@@ -65,7 +65,7 @@ class Analyzer:
 		self.teamIdTbl = dict() # map from team ID number to team name
 		self.playerNameTbl = dict() # map from player name to PlayerData
 		self.playerPositionTbl = list() # map from position idx to list of all PlayerData for that position
-		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD", 5 : "MGR" }
+		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD" }
 		self.playersToExclude = {}
 		self.budget = 1000 # in hundreds of thousands of Euros
 		self.maxNumPlayersPerTeam = 3
@@ -74,12 +74,14 @@ class Analyzer:
 		# order is GoalKeeper, Defender, Midfielder, Forward, Manager
 		self.positionCountTbl = [ 2, 5, 5, 3, 0 ]
 		self.minPositionCountTbl = [ 1, 3, 1, 1, 0 ] # minimum number of players required per position in a game week
-		self.maxConsecutiveBadSearches = 10000000
+		self.maxConsecutiveBadSearches = 100000000
 		self.seasonStr = '2025-26'
+		self.numPositions = len(self.positionIdTbl)
  		# number of weeks before the present to include when gathering data for
 		# analysis. If -1 is specified, or if the number is larger than the total
 		# number of weeks in the database, all week data will be used.
 		self.numPrevWeeksForData = -1
+		self.lastCompletedGameweek = -1
 
 	def _readColumnLabels(self, colLabelLine, fn, colLabelTbl):
 		colLabels = colLabelLine.split(',')
@@ -159,24 +161,29 @@ class Analyzer:
 				self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
 
 	def _readGameWeekDataFromJSON(self, topLevelData, allGameweekData):
+		# make map from player ID to JSON top-level player data
+		playerIdToDataTbl = {}
+		for playerData in topLevelData['elements']:
+			playerIdToDataTbl[playerData['id']] = playerData
+
 		for event in topLevelData['events']:
-			gameweekId = event['id']
+			gameweekId = event['id'] # this should be the same as the game week number
 			gameweekData = allGameweekData[str(gameweekId)]
-			weekIdx = 0
-			for jsonPlayerData in gameweekData['elements']:
-				weekIdx += 1
-				playerId = jsonPlayerData['id']
-				firstName = topLevelData['elements'][playerId]['first_name']
-				lastName = topLevelData['elements'][playerId]['second_name']
+			for gwPlayerData in gameweekData['elements']:
+				playerId = gwPlayerData['id']
+				topLevelPlayerData = playerIdToDataTbl[playerId]
+				assert topLevelPlayerData['id'] == playerId
+				firstName = topLevelPlayerData['first_name']
+				lastName = topLevelPlayerData['second_name']
 				playerName = "%s %s" % (firstName, lastName)
-				minutesPlayed = int(jsonPlayerData['stats']['minutes'])
-				totalPoints = int(jsonPlayerData['stats']['total_points'])
+				minutesPlayed = int(gwPlayerData['stats']['minutes'])
+				totalPoints = int(gwPlayerData['stats']['total_points'])
 				playerData = self.playerNameTbl.get(playerName)
 				if playerData == None:
-					print("Warning: no data for %s" % playerName)
+					print("WARNING: no top-level data for %s (data found in week id %d)" % (playerName, gameweekId))
 					continue
 				nowCost = playerData.nowCost # FIXME: replace with actual cost this week
-				playerData.updateGameWeekTbl(weekIdx, totalPoints, nowCost, minutesPlayed)
+				playerData.updateGameWeekTbl(gameweekId, totalPoints, nowCost, minutesPlayed)
 	
 	def _readGameWeekData(self, gameWeekTopDir):
 		colLabelTbl = dict() # map from column label to column idx (0-indexed)
@@ -250,7 +257,7 @@ class Analyzer:
 			formSum = 0
 			pointsList = list() # list of points for all weeks up to current week
 			startWeek = self._getStartWeek(len(playerData.gameWeekTbl))
-			for weekIdx in range(startWeek, len(playerData.gameWeekTbl)+1):
+			for weekIdx in range(startWeek, self.lastCompletedGameweek + 1):
 				gwData = playerData.gameWeekTbl.get(weekIdx)
 				if gwData == None:
 					continue
@@ -268,7 +275,7 @@ class Analyzer:
 				gwData.statTbl[StatType.MEDIAN_POINTS] = self._getMedian(pointsList)
 			if self.numPrevWeeksForData == -1:
 				if pointsSum != playerData.totalPoints:
-					print("WARNING: Player %s (%s) total points mismatch: %d (reported total) vs. %d (summed total)" % (name, self.teamIdTbl[playerData.teamId], playerData.totalPoints, pointsSum))
+					print("WARNING: Player %s (id: %d, Team: %s) total points mismatch: %d (reported total) vs. %d (summed total)" % (name, playerData.playerId, self.teamIdTbl[playerData.teamId], playerData.totalPoints, pointsSum))
 			else:
 				playerData.totalPoints = pointsSum
 	
@@ -482,10 +489,9 @@ class Analyzer:
 		for posIdx in range(len(curTeamData.positionTbl)):
 			numRemainingForPosition = self.positionCountTbl[posIdx] - len(curTeamData.positionTbl[posIdx])
 			if numRemainingForPosition > 0:
-				allPlayerList = self.playerPositionTbl[posIdx]
 				idx = curIdxList[posIdx]
 				for i in range(idx, idx+numRemainingForPosition):
-					testPointSum += allPlayerList[idx].totalPoints
+					testPointSum += self.playerPositionTbl[posIdx][i].totalPoints
 		return (testPointSum <= curToBestPointsDiff)
 	
 	def _writeBestTeamToFile(self, bestTeamData, outFn):
@@ -573,14 +579,23 @@ class Analyzer:
 				positionStr = self.positionIdTbl[posIdx+1]
 				assert 0, "Error: incorrect number of %s: %d. Should be %d" % (positionStr, len(curTeamData.positionTbl[posIdx]), self.positionCountTbl[posIdx])
 		
+	def _getLastCompletedGameweek(self, topLevelData):
+		# find first week whose data is not finished
+		for idx in range(len(topLevelData['events'])):
+			if not topLevelData['events'][idx]['finished']:
+				return topLevelData['events'][idx]['id'] # return week id, which should be same as week idx
+
 	def readDataFromJSON(self, topLevelJsonFn, gameweekJsonFn):
 		fTop = open(topLevelJsonFn, 'r')
 		topLevelData = json.load(fTop)
+		self.lastCompletedGameweek = self._getLastCompletedGameweek(topLevelData)
 		self._readTeamDataFromJSON(topLevelData)
 		self._readPlayerDataFromJSON(topLevelData) # read cumulative data for each player
 		fGw = open(gameweekJsonFn, 'r')
 		gameweekData = json.load(fGw)
 		self._readGameWeekDataFromJSON(topLevelData, gameweekData)
+		self._examineGameWeekData()
+		self._createPlayerPositionTbl()
 	
 	def readData(self, fplTopDir):
 		teamDataFn = "%s/data/%s/teams.csv" % (fplTopDir, self.seasonStr)
@@ -593,8 +608,8 @@ class Analyzer:
 		self._createPlayerPositionTbl()
 
 	def findBestTeam(self, outFn):
-		bestTeamData = TeamData()
-		curTeamData = TeamData()
+		bestTeamData = TeamData(self.numPositions)
+		curTeamData = TeamData(self.numPositions)
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
@@ -609,9 +624,9 @@ class Analyzer:
 				curTeamData.totalCost += lastWeekData.statTbl[StatType.COST]
 
 	def _searchForBetterPlayer(self, posIdx, playerListIdx, playerList, origTeamData, transferOptions):
-		bestTeamData = TeamData()
+		bestTeamData = TeamData(self.numPositions)
 		# create team data without the given player
-		curTeamData = TeamData()
+		curTeamData = TeamData(self.numPositions)
 		origTeamData.copyTo(bestTeamData)
 		origTeamData.copyTo(curTeamData)
 		playerToTransfer = curTeamData.positionTbl[posIdx].pop(playerListIdx)
@@ -640,7 +655,7 @@ class Analyzer:
 				break
 
 	def findBestTransferOptions(self, teamFn, outFn):
-		curTeamData = TeamData()
+		curTeamData = TeamData(self.numPositions)
 		playerList = list()
 		# initialize budget to 0. Will be set to total cost of players + remaining in bank
 		self.budget = 0
