@@ -4,21 +4,19 @@ sys.path.insert(0, "%s/../lib" % pathlib.Path(__file__).parent.resolve())
 import analyzer
 			
 if __name__ == '__main__':
-	if len(sys.argv) not in [3, 4]:
-		print("Usage: python3 %s fplTopDir [teamPlayerList] outFn" % sys.argv[0])
+	if len(sys.argv) not in [4, 5]:
+		print("Usage: python3 %s fplTopLevelJson fplGameweekJson [teamPlayerList] outFn" % sys.argv[0])
 		sys.exit(1)
-	fplTopDir = sys.argv[1]
 	teamFn = None
-	if len(sys.argv) == 3:
-		outFn = sys.argv[2]
-	else:
-		teamFn = sys.argv[2]
-		outFn = sys.argv[3]
+	fplTopLevelJson = sys.argv[1]
+	fplGameweekJson = sys.argv[2]
+	outFn = sys.argv[-1]
+	if len(sys.argv) == 5:
+		teamFn = sys.argv[-2]
 
 	analyzer = analyzer.Analyzer()
-	#analyzer.readData(fplTopDir)
-	analyzer.readDataFromJSON('fpl_top_data.json', 'fpl_gameweek_data.json')
-	if teamFn == None:
+	analyzer.readDataFromJSON(fplTopLevelJson, fplGameweekJson)
+	if teamFn is None:
 		analyzer.findBestTeam(outFn)
 	else:
 		analyzer.findBestTransferOptions(teamFn, outFn)
