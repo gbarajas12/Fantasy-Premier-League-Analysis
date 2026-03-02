@@ -2,6 +2,8 @@ import sys
 import os
 from enum import Enum
 import json
+from sklearn import linear_model
+import matplotlib.pyplot as plt
 
 DebugFn = "week_data.txt"
 #self.positionCountTbl = [ 2, 3, 5, 3 ]
@@ -24,6 +26,7 @@ class PlayerGameWeekData:
 		self.statTbl[StatType.MEDIAN_POINTS] = 0 # median of points over all game weeks up to and including this week 
 		self.statTbl[StatType.MINUTES_PLAYED] = 0 # number of minutes played this gameweek
 
+
 class PlayerData:
 	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId):
 		self.name = '%s %s' % (firstName, lastName)
@@ -44,9 +47,9 @@ class PlayerData:
 		gwData.statTbl[StatType.WEEK_POINTS] += weekPoints
 		gwData.statTbl[StatType.COST] = weekCost
 		gwData.statTbl[StatType.MINUTES_PLAYED] += minutesPlayed
-			
 
-class TeamData:
+
+class SquadData:
 	def __init__(self, numPositions):
 		self.positionTbl = list() # map from position idx to list of players for that position
 		self.totalCost = 0
@@ -66,8 +69,8 @@ class Analyzer:
 		self.playerNameTbl = dict() # map from player name to PlayerData
 		self.playerPositionTbl = list() # map from position idx to list of all PlayerData for that position
 		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD" }
-		self.playersToExclude = {}
-		self.budget = 1000 # in hundreds of thousands of Euros
+		self.playersToExclude = { 'Bruno Guimarães Rodriguez Moura' }
+		self.budget = 1011 # in hundreds of thousands of Euros
 		self.maxNumPlayersPerTeam = 3
 		self.numWeeksForForm = 3 # number of weeks before current week to calculate form
 		# number of players per position in a Fantasy team, including subs
@@ -83,14 +86,48 @@ class Analyzer:
 		self.numPrevWeeksForData = -1
 		self.lastCompletedGameweek = -1
 
-	def _readColumnLabels(self, colLabelLine, fn, colLabelTbl):
-		colLabels = colLabelLine.split(',')
-		for i in range(len(colLabels)):
-			if colLabels[i] in colLabelTbl:
-				colLabelTbl[colLabels[i]] = i
-		# check that all necessary labels were found
-		for label,colIdx in colLabelTbl.items():
-			assert colIdx != None, "Error: could not find column label %s in file %s" % (label, fn)
+	def _getLinearRegObservations(self, numFeatureWeeks, numTargetWeeks):
+		X = []
+		y = []
+		for playerName, playerData in self.playerNameTbl.items():
+			if playerData.positionId != 1:
+				continue
+			gameWeekList = [v for v in sorted(playerData.gameWeekTbl.values(), key=lambda x: x.weekIdx)]
+			for i in range(len(gameWeekList) - (numTargetWeeks + numFeatureWeeks) + 1):
+				featureSum = 0
+				dataMissing = False
+				pointsList = []
+				for j in range(i, i + numFeatureWeeks):	
+					dataMissing = dataMissing or (gameWeekList[j].statTbl[StatType.MINUTES_PLAYED] == 0)
+					featureSum += gameWeekList[j].statTbl[StatType.WEEK_POINTS]
+					pointsList.append(gameWeekList[j].statTbl[StatType.WEEK_POINTS])
+				targetSum = 0
+				for j in range(i + numFeatureWeeks, i + numFeatureWeeks + numTargetWeeks):	
+					dataMissing = dataMissing or (gameWeekList[j].statTbl[StatType.MINUTES_PLAYED] == 0)
+					targetSum += gameWeekList[j].statTbl[StatType.WEEK_POINTS]
+				if not dataMissing:
+					X.append([float(featureSum) / numFeatureWeeks])
+					y.append(float(targetSum) / numTargetWeeks)
+		return (X, y)
+
+	# fit linear model to target values
+	def _runLinearRegression(self):
+		# choose target value
+		# choose feature set
+		# collect data for observations and target values
+		numTargetWeeks = 1
+		for a in range(1, self.lastCompletedGameweek - numTargetWeeks):
+			(X, y) = self._getLinearRegObservations(a, numTargetWeeks)
+			# run linear regression
+			reg = linear_model.LinearRegression(fit_intercept=True)
+			reg.fit(X, y)
+			rSquared = reg.score(X, y)
+			print(f"{a}: {rSquared}  {len(y)}")
+			#if a == 15:
+			#	x = [i[0] for i in X]
+			#	plt.scatter(x, y)
+			#	plt.show()
+			
 
 	def _readTeamDataFromJSON(self, data):
 		for teamData in data['teams']:
@@ -185,8 +222,8 @@ class Analyzer:
 		tempList.sort(key=lambda x: x[0], reverse=True) # sort entries by player week statVal
 		result[:] = tempList.copy()
 	
-	def _getBestTeamByStat(self, statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekSubs, weekCaptain):
-		numGameWeeks = len(teamData.positionTbl[0][0].gameWeekTbl)
+	def _getBestSquadByStat(self, statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain):
+		numGameWeeks = len(squadData.positionTbl[0][0].gameWeekTbl)
 		assert numGameWeeks >= weekIdx, "Error: asked for data for week idx: %d, but we only have data for %d weeks!" % (weekIdx, numGameWeeks)
 		# get list of players fir each position, sorted by decreasing statVal for this week
 		# each element is (statVal, playerData)
@@ -194,46 +231,46 @@ class Analyzer:
 		defenderList = list()
 		midfieldList = list()
 		forwardList = list()
-		self._getStatSortedPlayerListForWeek(statTypeForTeam, weekIdx, teamData.positionTbl[0], keeperList)
-		self._getStatSortedPlayerListForWeek(statTypeForTeam, weekIdx, teamData.positionTbl[1], defenderList)
-		self._getStatSortedPlayerListForWeek(statTypeForTeam, weekIdx, teamData.positionTbl[2], midfieldList)
-		self._getStatSortedPlayerListForWeek(statTypeForTeam, weekIdx, teamData.positionTbl[3], forwardList)
+		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[0], keeperList)
+		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[1], defenderList)
+		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[2], midfieldList)
+		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[3], forwardList)
 		# formation rules: must have 1 goalie, at least: 3 defenders, 1 mid, 1 forward
 		# choose highest statVal goalie for week 1
 		minNumDefenders = min(len(defenderList), self.minPositionCountTbl[1])
 		if len(keeperList) != 0:
-			weekTeam.append(keeperList[0][1])
+			weekSquad.append(keeperList[0][1])
 		for i in range(minNumDefenders):
-			weekTeam.append(defenderList[i][1])
+			weekSquad.append(defenderList[i][1])
 		if len(midfieldList) != 0:
-			weekTeam.append(midfieldList[0][1])
+			weekSquad.append(midfieldList[0][1])
 		if len(forwardList) != 0:
-			weekTeam.append(forwardList[0][1])
+			weekSquad.append(forwardList[0][1])
 		# now we need 5 more players, which could be defenders, mid, or forwards.
 		# Choose the best out of the remaining options.
 		remainingPlayerList = defenderList[minNumDefenders:] + midfieldList[1:] + forwardList[1:]
 		remainingPlayerList.sort(key=lambda x: x[0], reverse=True)
 		for i in range(min(len(remainingPlayerList), 5)):
-			weekTeam.append(remainingPlayerList[i][1])
+			weekSquad.append(remainingPlayerList[i][1])
 		# add the remaining players as subs
 		for i in remainingPlayerList[5:]:
 			weekSubs.append(i[1])
 		if len(keeperList) > 1:
 			weekSubs.append(keeperList[1][1])
 		# now choose the captain based on the chosen stat type
-		captainSortedWeekTeam = list()
-		self._getStatSortedPlayerListForWeek(statTypeForCaptain, weekIdx, weekTeam, captainSortedWeekTeam)
-		return (captainSortedWeekTeam[0][1], captainSortedWeekTeam[1][1])
+		captainSortedWeekSquad = list()
+		self._getStatSortedPlayerListForWeek(statTypeForCaptain, weekIdx, weekSquad, captainSortedWeekSquad)
+		return (captainSortedWeekSquad[0][1], captainSortedWeekSquad[1][1])
 
-	def _getTeamPointsForGameWeek(self, weekIdx, weekTeam, weekSubs, weekCaptain, weekViceCaptain):
-		finalWeekTeam = list() # final list of players selected after any substitutions
+	def _getSquadPointsForGameWeek(self, weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain):
+		finalWeekSquad = list() # final list of players selected after any substitutions
 		result = 0
 		posCountTbl = [0, 0, 0, 0] # number of players who did play, per position
-		for playerData in weekTeam:
+		for playerData in weekSquad:
 			if weekIdx in playerData.gameWeekTbl and playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
 				result += playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 				posCountTbl[playerData.positionId-1] += 1
-				finalWeekTeam.append(playerData)
+				finalWeekSquad.append(playerData)
 
 		usedSubIdxs = set()
 		# first, try to add subs to fill missing position quotas
@@ -247,11 +284,11 @@ class Analyzer:
 							result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 							usedSubIdxs.add(j)
 							posCountTbl[i] += 1
-							finalWeekTeam.append(weekSubs[j])
+							finalWeekSquad.append(weekSubs[j])
 
 		# next, try to add subs in order of priority
 		for j in range(len(weekSubs)):
-			if len(finalWeekTeam) == 11:
+			if len(finalWeekSquad) == 11:
 				break
 			if j not in usedSubIdxs:
 				if weekSubs[j].positionId == 1:
@@ -260,9 +297,9 @@ class Analyzer:
 					result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 					usedSubIdxs.add(j)
 					posCountTbl[weekSubs[j].positionId-1] += 1
-					finalWeekTeam.append(weekSubs[j])
-		# replace week team with final week team
-		weekTeam[:] = finalWeekTeam.copy()
+					finalWeekSquad.append(weekSubs[j])
+		# replace week squad with final week squad
+		weekSquad[:] = finalWeekSquad.copy()
 		
 		# add the captain's week points to double-count them. If captain did not play,
 		# add vice captain's points instead
@@ -273,14 +310,14 @@ class Analyzer:
 			result += weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 		return result
 	
-	def _writeTeamWeekPerformanceToFile(self, weekIdx, totalPoints, weekPoints, weekTeam, weekSubs, weekCaptain, weekViceCaptain, fOut):
+	def _writeSquadWeekPerformanceToFile(self, weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut):
 		fOut.write("Week: %d\n" % (weekIdx+1))
-		fOut.write("Team Points This Week: %d\n" % weekPoints)
-		fOut.write("Total Team Points After This Week: %d\n" % totalPoints)
+		fOut.write("Squad Points This Week: %d\n" % weekPoints)
+		fOut.write("Total Squad Points After This Week: %d\n" % totalPoints)
 		fOut.write("Captain: %s\n" % weekCaptain.name)
 		fOut.write("Vice Captain: %s\n" % weekViceCaptain.name)
 		fOut.write("Player\tWeekPoints\tMinutesPlayed\n")
-		for playerData in weekTeam:
+		for playerData in weekSquad:
 			if weekIdx in playerData.gameWeekTbl:
 				weekPoints = playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 				minutesPlayed = playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED]
@@ -299,34 +336,34 @@ class Analyzer:
 			fOut.write("%s\t%d\t%d\n" % (playerData.name, weekPoints, minutesPlayed))
 		fOut.write("\n")
 	
-	# Determine the total number of points the team has acheived if the strategy
+	# Determine the total number of points the squad has acheived if the strategy
 	# chosen was to pick the players each week to maximize the desired statistic
 	# based on the players' performance prior to each week. For example, if
-	# StatType.TOTAL_POINTS is chosen for statTypeForTeam, the starting lineup 
+	# StatType.TOTAL_POINTS is chosen for statTypeForSquad, the starting lineup 
 	# each week will be chosen based on which players had the most total points before that week.
 	# A separate strategy may be chosen for choosing the captain each week.
-	# NOTE: The first week's players are chose by maximizing the cost of the team.
-	def _evaluateStrategy(self, statTypeForTeam, statTypeForCaptain, teamData):
+	# NOTE: The first week's players are chose by maximizing the cost of the squad.
+	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData):
 		if DebugFn != None:
 			fOut = open(DebugFn,'w')
-		numGameWeeks = len(teamData.positionTbl[0][0].gameWeekTbl)
+		numGameWeeks = len(squadData.positionTbl[0][0].gameWeekTbl)
 		totalPoints = 0
-		weekTeam = list() # subset of players for current week
+		weekSquad = list() # subset of players for current week
 		weekSubs = list() # substitutes, ordered by decreasing stat of choice
 		weekCaptain = None
 		weekViceCaptain = None
-		(weekCaptain, weekViceCaptain) = self._getBestTeamByStat(StatType.COST, StatType.COST, 1, teamData, weekTeam, weekSubs, weekCaptain)
-		# for each week, find number of points for all players in that week's team
+		(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(StatType.COST, StatType.COST, 1, squadData, weekSquad, weekSubs, weekCaptain)
+		# for each week, find number of points for all players in that week's squad
 		startWeek = self._getStartWeek(numGameWeeks)
 		for weekIdx in range(startWeek, numGameWeeks):
-			weekPoints = self._getTeamPointsForGameWeek(weekIdx, weekTeam, weekSubs, weekCaptain, weekViceCaptain)
+			weekPoints = self._getSquadPointsForGameWeek(weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain)
 			totalPoints += weekPoints
-			# choose team for next week
+			# choose squad for next week
 			if DebugFn != None:
-				self._writeTeamWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekTeam, weekSubs, weekCaptain, weekViceCaptain, fOut)
-			weekTeam = list()
+				self._writeSquadWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut)
+			weekSquad = list()
 			weekSubs = list()
-			(weekCaptain, weekViceCaptain) = self._getBestTeamByStat(statTypeForTeam, statTypeForCaptain, weekIdx, teamData, weekTeam, weekSubs, weekCaptain)
+			(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain)
 	
 		if DebugFn != None:
 			fOut.close()
@@ -357,7 +394,7 @@ class Analyzer:
 				# ignore this player if there are enought other players with one of the following:
 				# - lower cost, at least as many points as current player
 				# - equal cost, more points than current player
-				# If the number of better players is at least the number of required players of that position on the team,
+				# If the number of better players is at least the number of required players of that position on the squad,
 				# skip this player. (e.g. there are 2 required goalies and at least 2 goalies are better than the current one).
 				betterPlayerCount = 0
 				# only look at players that are not more expensive
@@ -378,44 +415,43 @@ class Analyzer:
 			self.playerPositionTbl[posIdx].sort(key = lambda x: x.totalPoints, reverse=True)
 		#print ("%d %d %d %d" % (len(self.playerPositionTbl[0]), len(self.playerPositionTbl[1]), len(self.playerPositionTbl[2]), len(self.playerPositionTbl[3])))
 	
-	# Returns True if no combination of players can be added to the current team to
-	# beat the best team.
-	def _cannotBeatBestTeam(self, bestTeamData, curTeamData, curIdxList):
-		curToBestPointsDiff = bestTeamData.totalPoints - curTeamData.totalPoints
+	# Returns True if no combination of players can be added to the current squad to
+	# beat the best squad.
+	def _cannotBeatBestSquad(self, bestSquadData, curSquadData, curIdxList):
+		curToBestPointsDiff = bestSquadData.totalPoints - curSquadData.totalPoints
 		testPointSum = 0
-		for posIdx in range(len(curTeamData.positionTbl)):
-			numRemainingForPosition = self.positionCountTbl[posIdx] - len(curTeamData.positionTbl[posIdx])
+		for posIdx in range(len(curSquadData.positionTbl)):
+			numRemainingForPosition = self.positionCountTbl[posIdx] - len(curSquadData.positionTbl[posIdx])
 			if numRemainingForPosition > 0:
 				idx = curIdxList[posIdx]
 				for i in range(idx, idx+numRemainingForPosition):
 					testPointSum += self.playerPositionTbl[posIdx][i].totalPoints
 		return (testPointSum <= curToBestPointsDiff)
 	
-	def _writeBestTeamToFile(self, bestTeamData, outFn):
+	def _writeBestSquadToFile(self, bestSquadData, outFn):
 		# write outfile
 		totalPoints = 0
 		with open(outFn,'w') as fOut:
-			for posIdx in range(len(bestTeamData.positionTbl)):
+			for posIdx in range(len(bestSquadData.positionTbl)):
 				fOut.write("%s\n" % self.positionIdTbl[posIdx+1])
 				fOut.write("Name\tClub\tCost\tTotal Points\n")
-				for playerData in bestTeamData.positionTbl[posIdx]:
+				for playerData in bestSquadData.positionTbl[posIdx]:
 					totalPoints += playerData.totalPoints
 					clubName = self.teamIdTbl[playerData.teamId]
 					fOut.write("%s\t%s\t%.1f\t%d\n" % (playerData.name, clubName, playerData.nowCost/10.0, playerData.totalPoints))
 				fOut.write("\n")
-		assert totalPoints == bestTeamData.totalPoints
-		totalStrategyPoints = self._evaluateStrategy(StatType.FORM, StatType.FORM, bestTeamData)
-		#totalStrategyPoints = 0 # FIXME: remove and uncomment above
-		print("%d %d %d" % (totalPoints, bestTeamData.totalCost, totalStrategyPoints))
+		assert totalPoints == bestSquadData.totalPoints
+		totalStrategyPoints = self._evaluateStrategy(StatType.FORM, StatType.FORM, bestSquadData)
+		print("%d %d %d" % (totalPoints, bestSquadData.totalCost, totalStrategyPoints))
 	
-	def _dfsFindBestTeam(self, teamCountTbl, curIdxList, bestTeamData, curTeamData, numConsecutiveBadSearches, outFn=None):
-		# assemble every possible team
+	def _dfsFindBestSquad(self, teamCountTbl, curIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn=None):
+		# assemble every possible squad
 		#print("%d %d %d %d" % (curIdxList[0], curIdxList[1], curIdxList[2], curIdxList[3]))
-		# end search if no combination of players can be added to current team to beat the best team
-		if self._cannotBeatBestTeam(bestTeamData, curTeamData, curIdxList):
+		# end search if no combination of players can be added to current squad to beat the best squad
+		if self._cannotBeatBestSquad(bestSquadData, curSquadData, curIdxList):
 			return
-		for posIdx in range(len(curTeamData.positionTbl)):
-			curPlayerList = curTeamData.positionTbl[posIdx]
+		for posIdx in range(len(curSquadData.positionTbl)):
+			curPlayerList = curSquadData.positionTbl[posIdx]
 			numRemainingForPosition = self.positionCountTbl[posIdx] - len(curPlayerList)
 			if numRemainingForPosition > 0:
 				allPlayerList = self.playerPositionTbl[posIdx]
@@ -425,38 +461,38 @@ class Analyzer:
 				for i in range(curIdxList[posIdx], endIdx):
 					if numConsecutiveBadSearches[0] >= self.maxConsecutiveBadSearches:
 						return
-					if curTeamData.totalCost + allPlayerList[i].nowCost > self.budget:
-						continue # we cannot complete the team, so end this search branch
+					if curSquadData.totalCost + allPlayerList[i].nowCost > self.budget:
+						continue # we cannot complete the squad, so end this search branch
 					# check if we have reached the limit of players for the current player's club
 					if teamCountTbl[allPlayerList[i].teamId] == self.maxNumPlayersPerTeam:
 						continue
 					teamCountTbl[allPlayerList[i].teamId] += 1
 					curPlayerList.append(allPlayerList[i])
-					curTeamData.totalPoints += allPlayerList[i].totalPoints
-					curTeamData.totalCost += allPlayerList[i].nowCost
+					curSquadData.totalPoints += allPlayerList[i].totalPoints
+					curSquadData.totalCost += allPlayerList[i].nowCost
 					newIdxList = curIdxList.copy()
 					newIdxList[posIdx] = i+1
-					# find all teams that include the current list of players
-					self._dfsFindBestTeam(teamCountTbl, newIdxList, bestTeamData, curTeamData, numConsecutiveBadSearches, outFn)
+					# find all squads that include the current list of players
+					self._dfsFindBestSquad(teamCountTbl, newIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
 					# remove current player before examining next player
 					curPlayerList.pop()
-					curTeamData.totalPoints -= allPlayerList[i].totalPoints
-					curTeamData.totalCost -= allPlayerList[i].nowCost
+					curSquadData.totalPoints -= allPlayerList[i].totalPoints
+					curSquadData.totalCost -= allPlayerList[i].nowCost
 					teamCountTbl[allPlayerList[i].teamId] -= 1
-				break # we have already examined all teams with the current set of players, so we can end our search
-		# here we have a complete team to compare against the best team yet found
-		if bestTeamData.totalPoints < curTeamData.totalPoints:
-			# update best team data
-			curTeamData.copyTo(bestTeamData)
+				break # we have already examined all squads with the current set of players, so we can end our search
+		# here we have a complete squad to compare against the best squad yet found
+		if bestSquadData.totalPoints < curSquadData.totalPoints:
+			# update best squad data
+			curSquadData.copyTo(bestSquadData)
 			if outFn != None:
-				self._writeBestTeamToFile(bestTeamData, outFn)
+				self._writeBestSquadToFile(bestSquadData, outFn)
 			numConsecutiveBadSearches[0] += 0
 		else:
 			numConsecutiveBadSearches[0] += 1
 
-	def _readInCustomTeam(self, teamFn, playerList, curTeamData):
+	def _readInCustomSquad(self, squadFn, playerList, curSquadData):
 		playerList.clear()
-		with open(teamFn,'r') as fIn:
+		with open(squadFn,'r') as fIn:
 			lines = fIn.readlines()
 			# first line gives remaing budget in bank, in millions of euros
 			self.budget += int(float(lines[0].split()[-1]) * 10) # convert to 100,000s of euros
@@ -469,12 +505,12 @@ class Analyzer:
 				assert playerData != None, "Error: no player named %s. Make sure full name is spelled correctly as it appears in the database!" % playerName
 				playerList.append(playerData)
 				playerPos = playerData.positionId
-				curTeamData.positionTbl[playerPos-1].append(playerData)
+				curSquadData.positionTbl[playerPos-1].append(playerData)
 		# make sure we have the desired distribution of positions
-		for posIdx in range(len(curTeamData.positionTbl)):
-			if len(curTeamData.positionTbl[posIdx]) != self.positionCountTbl[posIdx]:
+		for posIdx in range(len(curSquadData.positionTbl)):
+			if len(curSquadData.positionTbl[posIdx]) != self.positionCountTbl[posIdx]:
 				positionStr = self.positionIdTbl[posIdx+1]
-				assert 0, "Error: incorrect number of %s: %d. Should be %d" % (positionStr, len(curTeamData.positionTbl[posIdx]), self.positionCountTbl[posIdx])
+				assert 0, "Error: incorrect number of %s: %d. Should be %d" % (positionStr, len(curSquadData.positionTbl[posIdx]), self.positionCountTbl[posIdx])
 		
 	def _getLastCompletedGameweek(self, topLevelData):
 		# find first week whose data is not finished
@@ -494,31 +530,31 @@ class Analyzer:
 		self._examineGameWeekData()
 		self._createPlayerPositionTbl()
 
-	def findBestTeam(self, outFn):
-		bestTeamData = TeamData(self.numPositions)
-		curTeamData = TeamData(self.numPositions)
+	def findBestSquad(self, outFn):
+		bestSquadData = SquadData(self.numPositions)
+		curSquadData = SquadData(self.numPositions)
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
-		self._dfsFindBestTeam(teamCountTbl, positionIdxList, bestTeamData, curTeamData, numConsecutiveBadSearches, outFn)
+		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
 
-	def _findCustomTeamMetadata(self, curTeamData):
-		for posIdx in range(len(curTeamData.positionTbl)):
-			playerList = curTeamData.positionTbl[posIdx]
+	def _findCustomSquadMetadata(self, curSquadData):
+		for posIdx in range(len(curSquadData.positionTbl)):
+			playerList = curSquadData.positionTbl[posIdx]
 			for playerData in playerList:
 				lastWeekData = playerData.gameWeekTbl[-1]
-				curTeamData.totalPoints += lastWeekData.statTbl[StatType.TOTAL_POINTS]
-				curTeamData.totalCost += lastWeekData.statTbl[StatType.COST]
+				curSquadData.totalPoints += lastWeekData.statTbl[StatType.TOTAL_POINTS]
+				curSquadData.totalCost += lastWeekData.statTbl[StatType.COST]
 
-	def _searchForBetterPlayer(self, posIdx, playerListIdx, playerList, origTeamData, transferOptions):
-		bestTeamData = TeamData(self.numPositions)
-		# create team data without the given player
-		curTeamData = TeamData(self.numPositions)
-		origTeamData.copyTo(bestTeamData)
-		origTeamData.copyTo(curTeamData)
-		playerToTransfer = curTeamData.positionTbl[posIdx].pop(playerListIdx)
-		curTeamData.totalCost -= playerToTransfer.nowCost
-		curTeamData.totalPoints -= playerToTransfer.totalPoints
+	def _searchForBetterPlayer(self, posIdx, playerListIdx, playerList, origSquadData, transferOptions):
+		bestSquadData = SquadData(self.numPositions)
+		# create squad data without the given player
+		curSquadData = SquadData(self.numPositions)
+		origSquadData.copyTo(bestSquadData)
+		origSquadData.copyTo(curSquadData)
+		playerToTransfer = curSquadData.positionTbl[posIdx].pop(playerListIdx)
+		curSquadData.totalCost -= playerToTransfer.nowCost
+		curSquadData.totalPoints -= playerToTransfer.totalPoints
 		
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		for playerData in playerList:
@@ -527,39 +563,39 @@ class Analyzer:
 
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
-		self._dfsFindBestTeam(teamCountTbl, positionIdxList, bestTeamData, curTeamData, numConsecutiveBadSearches)
-		# if best team total points did not improve over original, skip
-		pointsImprovement = bestTeamData.totalPoints - origTeamData.totalPoints
+		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches)
+		# if best squad total points did not improve over original, skip
+		pointsImprovement = bestSquadData.totalPoints - origSquadData.totalPoints
 		if pointsImprovement <= 0:
 			return
 		# check if there is a new player for the position
 		origPosPlayerNames = set()
-		for playerData in origTeamData.positionTbl[posIdx]:
+		for playerData in origSquadData.positionTbl[posIdx]:
 			origPosPlayerNames.add(playerData.name)
-		for playerData in bestTeamData.positionTbl[posIdx]:
+		for playerData in bestSquadData.positionTbl[posIdx]:
 			if playerData.name not in origPosPlayerNames:
 				transferOptions.append((playerToTransfer, playerData, pointsImprovement))
 				break
 
-	def findBestTransferOptions(self, teamFn, outFn):
-		curTeamData = TeamData(self.numPositions)
+	def findBestTransferOptions(self, squadFn, outFn):
+		curSquadData = SquadData(self.numPositions)
 		playerList = list()
 		# initialize budget to 0. Will be set to total cost of players + remaining in bank
 		self.budget = 0
-		# read team data from file
-		self._readInCustomTeam(teamFn, playerList, curTeamData)
-		# find metadata of team
-		self._findCustomTeamMetadata(curTeamData)
-		self.budget += curTeamData.totalCost
+		# read squad data from file
+		self._readInCustomSquad(squadFn, playerList, curSquadData)
+		# find metadata of squad
+		self._findCustomSquadMetadata(curSquadData)
+		self.budget += curSquadData.totalCost
 		print("Budget: %.1fm euros" % (self.budget/10.0))
 		transferOptions = list() # list of (origPlayer, newPlayer, pointsImprovement)
-		# add all players from current team to exclusion list
+		# add all players from current squad to exclusion list
 		origExclusionList = self.playersToExclude.copy()
 		self.playersToExclude.update(playerList)
-		# for each player, search for a player that would improve the team
-		for posIdx in range(len(curTeamData.positionTbl)):
-			for playerListIdx in range(len(curTeamData.positionTbl[posIdx])):
-				self._searchForBetterPlayer(posIdx, playerListIdx, playerList, curTeamData, transferOptions)
+		# for each player, search for a player that would improve the squad
+		for posIdx in range(len(curSquadData.positionTbl)):
+			for playerListIdx in range(len(curSquadData.positionTbl[posIdx])):
+				self._searchForBetterPlayer(posIdx, playerListIdx, playerList, curSquadData, transferOptions)
 		# sort by points improvement
 		transferOptions.sort(key=lambda x: x[2], reverse=True)
 		# write data to outfile
