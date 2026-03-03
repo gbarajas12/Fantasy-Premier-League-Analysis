@@ -14,6 +14,9 @@ class StatType(Enum):
 	FORM           = 3
 	MEDIAN_POINTS  = 4
 	MINUTES_PLAYED = 5
+	GOALS_FOR      = 6 # goals scored by a team
+	GOALS_AGAINST  = 7 # goals scored against a team
+
 
 class PlayerGameWeekData:
 	def __init__(self, weekIdx):
@@ -24,7 +27,7 @@ class PlayerGameWeekData:
 		self.statTbl[StatType.TOTAL_POINTS] = 0 # sum of all points in the weeks up to and including this week
 		self.statTbl[StatType.FORM] = 0 # average of points from previous self.numWeeksForForm weeks 
 		self.statTbl[StatType.MEDIAN_POINTS] = 0 # median of points over all game weeks up to and including this week 
-		self.statTbl[StatType.MINUTES_PLAYED] = 0 # number of minutes played this gameweek
+		self.statTbl[StatType.MINUTES_PLAYED] = 0 # number of minutes played this gameWeek
 
 
 class PlayerData:
@@ -41,7 +44,7 @@ class PlayerData:
 	def copyTo(self, other):
 		other = PlayerData(self.firstName, self.lastName, self.playerId, self.totalPoints, self.nowCost, self.teamId, self.positionId)
 		other.gameWeekTbl[:] = self.gameWeekTbl.copy()
-	# Updates the entry for the week (this could happen for double gameweek).
+	# Updates the entry for the week (this could happen for double gameWeek).
 	def updateGameWeekTbl(self, weekIdx, weekPoints, weekCost, minutesPlayed):
 		gwData = self.gameWeekTbl.setdefault(weekIdx, PlayerGameWeekData(weekIdx))
 		gwData.statTbl[StatType.WEEK_POINTS] += weekPoints
@@ -49,6 +52,40 @@ class PlayerData:
 		gwData.statTbl[StatType.MINUTES_PLAYED] += minutesPlayed
 
 
+
+# Data for one week for a Premier League Team
+class TeamGameWeekData:
+	def __init__(self, weekIdx):
+		self.weekIdx = weekIdx
+		self.statTbl = dict()
+		self.statTbl[StatType.GOALS_FOR] = 0 # number of goals scored by this team up to and including this gameWeek
+		self.statTbl[StatType.GOALS_AGAINST] = 0 # number of goals scored against this team up to and including this gameWeek
+		# The below lists are usually just one element, but may be two in the case of a double game week
+		self.opponentTeamIds = []
+		self.isHome = [] 
+
+
+# Data for an actual Premier League team.
+class TeamData:
+	def __init__(self, teamName, teamId):
+		self.name = teamName
+		self.id = teamId
+		self.statTbl = dict()
+		self.statTbl[StatType.GOALS_FOR] = 0 # total number of goals scored by this team
+		self.statTbl[StatType.GOALS_AGAINST] = 0 # total number of goals scored against this team
+		self.gameWeekTbl = dict() # map from week idx to TeamGameWeekData
+	def updateGameWeekTbl(self, weekIdx, weekGoalsFor, weekGoalsAgainst, opponentTeamId, isHomeGame):
+		assert weekIdx in [len(self.gameWeekTbl), len(self.gameWeekTbl) + 1]
+		self.statTbl[StatType.GOALS_FOR] += weekGoalsFor
+		self.statTbl[StatType.GOALS_AGAINST] += weekGoalsAgainst
+		data = self.gameWeekTbl.setdefault(weekIdx, TeamGameWeekData(weekIdx))
+		data.statTbl[StatType.GOALS_FOR] = self.statTbl[StatType.GOALS_FOR]
+		data.statTbl[StatType.GOALS_AGAINST] = self.statTbl[StatType.GOALS_AGAINST]
+		data.opponentTeamIds.append(opponentTeamId)
+		data.opponentTeamIds.append(isHomeGame)
+
+
+# Data for a squad, which corresponds to a Fantasy team but not a real club.
 class SquadData:
 	def __init__(self, numPositions):
 		self.positionTbl = list() # map from position idx to list of players for that position
@@ -65,12 +102,12 @@ class SquadData:
 
 class Analyzer:
 	def __init__(self):
-		self.teamIdTbl = dict() # map from team ID number to team name
+		self.teamIdTbl = dict() # map from team ID number to TeamData
 		self.playerNameTbl = dict() # map from player name to PlayerData
 		self.playerPositionTbl = list() # map from position idx to list of all PlayerData for that position
 		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD" }
-		self.playersToExclude = { 'Bruno Guimarães Rodriguez Moura' }
-		self.budget = 1011 # in hundreds of thousands of Euros
+		self.playersToExclude = { }
+		self.budget = 1009 # in hundreds of thousands of Euros
 		self.maxNumPlayersPerTeam = 3
 		self.numWeeksForForm = 3 # number of weeks before current week to calculate form
 		# number of players per position in a Fantasy team, including subs
@@ -84,7 +121,7 @@ class Analyzer:
 		# analysis. If -1 is specified, or if the number is larger than the total
 		# number of weeks in the database, all week data will be used.
 		self.numPrevWeeksForData = -1
-		self.lastCompletedGameweek = -1
+		self.lastCompletedGameWeek = -1
 
 	def _getLinearRegObservations(self, numFeatureWeeks, numTargetWeeks):
 		X = []
@@ -106,7 +143,21 @@ class Analyzer:
 					dataMissing = dataMissing or (gameWeekList[j].statTbl[StatType.MINUTES_PLAYED] == 0)
 					targetSum += gameWeekList[j].statTbl[StatType.WEEK_POINTS]
 				if not dataMissing:
-					X.append([float(featureSum) / numFeatureWeeks])
+					teamData = self.teamIdTbl[playerData.teamId]
+					if i + numFeatureWeeks - 1 == 0:
+						teamGoalsFor = 0
+						teamGoalsAgainst = 0
+						opponentTeamGoalsFor = 0
+						opponentTeamGoalsAgainst = 0
+					else:
+						gameWeekTeamData = teamData.gameWeekTbl[i + numFeatureWeeks - 1]
+						teamGoalsFor = gameWeekTeamData.statTbl[StatType.GOALS_FOR]
+						teamGoalsAgainst = gameWeekTeamData.statTbl[StatType.GOALS_AGAINST]
+						opponentTeamData = self.teamIdTbl[gameWeekTeamData.opponentTeamIds[0]]
+						opponentGameWeekTeamData = opponentTeamData.gameWeekTbl[i + numFeatureWeeks - 1]
+						opponentTeamGoalsFor = opponentGameWeekTeamData.statTbl[StatType.GOALS_FOR]
+						opponentTeamGoalsAgainst = opponentGameWeekTeamData.statTbl[StatType.GOALS_AGAINST]
+					X.append([float(featureSum) / numFeatureWeeks, teamGoalsFor, teamGoalsAgainst, opponentTeamGoalsFor, opponentTeamGoalsAgainst])
 					y.append(float(targetSum) / numTargetWeeks)
 		return (X, y)
 
@@ -116,7 +167,7 @@ class Analyzer:
 		# choose feature set
 		# collect data for observations and target values
 		numTargetWeeks = 1
-		for a in range(1, self.lastCompletedGameweek - numTargetWeeks):
+		for a in range(1, self.lastCompletedGameWeek - numTargetWeeks):
 			(X, y) = self._getLinearRegObservations(a, numTargetWeeks)
 			# run linear regression
 			reg = linear_model.LinearRegression(fit_intercept=True)
@@ -133,7 +184,7 @@ class Analyzer:
 		for teamData in data['teams']:
 			teamName = teamData['name']
 			teamId = teamData['id']
-			self.teamIdTbl[teamId] = teamName
+			self.teamIdTbl[teamId] = TeamData(teamName, teamId)
 	
 	def _readPlayerDataFromJSON(self, data):
 		for playerData in data['elements']:
@@ -146,16 +197,18 @@ class Analyzer:
 			positionId = playerData['element_type']
 			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
 
-	def _readGameWeekDataFromJSON(self, topLevelData, allGameweekData):
+	def _readGameWeekDataFromJSON(self, topLevelData, allGameWeekPlayerData, allGameWeekFixtureData):
 		# make map from player ID to JSON top-level player data
 		playerIdToDataTbl = {}
 		for playerData in topLevelData['elements']:
 			playerIdToDataTbl[playerData['id']] = playerData
 
+		# read player data
 		for event in topLevelData['events']:
-			gameweekId = event['id'] # this should be the same as the game week number
-			gameweekData = allGameweekData[str(gameweekId)]
-			for gwPlayerData in gameweekData['elements']:
+			gameWeekId = event['id'] # this should be the same as the game week number
+			gameWeekPlayerData = allGameWeekPlayerData[str(gameWeekId)]
+			gameWeekFixtureData = allGameWeekFixtureData[str(gameWeekId)]
+			for gwPlayerData in gameWeekPlayerData['elements']:
 				playerId = gwPlayerData['id']
 				topLevelPlayerData = playerIdToDataTbl[playerId]
 				assert topLevelPlayerData['id'] == playerId
@@ -166,11 +219,24 @@ class Analyzer:
 				totalPoints = int(gwPlayerData['stats']['total_points'])
 				playerData = self.playerNameTbl.get(playerName)
 				if playerData == None:
-					print("WARNING: no top-level data for %s (data found in week id %d)" % (playerName, gameweekId))
+					print("WARNING: no top-level data for %s (data found in week id %d)" % (playerName, gameWeekId))
 					continue
 				nowCost = playerData.nowCost # FIXME: replace with actual cost this week
-				playerData.updateGameWeekTbl(gameweekId, totalPoints, nowCost, minutesPlayed)
-	
+				playerData.updateGameWeekTbl(gameWeekId, totalPoints, nowCost, minutesPlayed)
+
+			# read fixture data
+			for fixtureData in gameWeekFixtureData: 
+				if not fixtureData["finished"]:
+					break
+				homeTeamId = fixtureData["team_h"]
+				awayTeamId = fixtureData["team_a"]
+				homeTeamScore = fixtureData["team_h_score"]
+				awayTeamScore = fixtureData["team_a_score"]
+				homeTeamData = self.teamIdTbl[homeTeamId]
+				awayTeamData = self.teamIdTbl[awayTeamId]
+				homeTeamData.updateGameWeekTbl(gameWeekId, homeTeamScore, awayTeamScore, awayTeamId, True)
+				awayTeamData.updateGameWeekTbl(gameWeekId, awayTeamScore, homeTeamScore, homeTeamId, False)
+
 	def _getMedian(self, numList):
 		sortedList = sorted(numList)
 		midIdx = len(sortedList) // 2
@@ -191,7 +257,7 @@ class Analyzer:
 			formSum = 0
 			pointsList = list() # list of points for all weeks up to current week
 			startWeek = self._getStartWeek(len(playerData.gameWeekTbl))
-			for weekIdx in range(startWeek, self.lastCompletedGameweek + 1):
+			for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
 				gwData = playerData.gameWeekTbl.get(weekIdx)
 				if gwData == None:
 					continue
@@ -209,7 +275,7 @@ class Analyzer:
 				gwData.statTbl[StatType.MEDIAN_POINTS] = self._getMedian(pointsList)
 			if self.numPrevWeeksForData == -1:
 				if pointsSum != playerData.totalPoints:
-					print("WARNING: Player %s (id: %d, Team: %s) total points mismatch: %d (reported total) vs. %d (summed total)" % (name, playerData.playerId, self.teamIdTbl[playerData.teamId], playerData.totalPoints, pointsSum))
+					print("WARNING: Player %s (id: %d, Team: %s) total points mismatch: %d (reported total) vs. %d (summed total)" % (name, playerData.playerId, self.teamIdTbl[playerData.teamId].name, playerData.totalPoints, pointsSum))
 			else:
 				playerData.totalPoints = pointsSum
 	
@@ -311,7 +377,7 @@ class Analyzer:
 		return result
 	
 	def _writeSquadWeekPerformanceToFile(self, weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut):
-		fOut.write("Week: %d\n" % (weekIdx+1))
+		fOut.write("Week: %d\n" % (weekIdx))
 		fOut.write("Squad Points This Week: %d\n" % weekPoints)
 		fOut.write("Total Squad Points After This Week: %d\n" % totalPoints)
 		fOut.write("Captain: %s\n" % weekCaptain.name)
@@ -346,7 +412,7 @@ class Analyzer:
 	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData):
 		if DebugFn != None:
 			fOut = open(DebugFn,'w')
-		numGameWeeks = len(squadData.positionTbl[0][0].gameWeekTbl)
+		numGameWeeks = self.lastCompletedGameWeek
 		totalPoints = 0
 		weekSquad = list() # subset of players for current week
 		weekSubs = list() # substitutes, ordered by decreasing stat of choice
@@ -437,11 +503,11 @@ class Analyzer:
 				fOut.write("Name\tClub\tCost\tTotal Points\n")
 				for playerData in bestSquadData.positionTbl[posIdx]:
 					totalPoints += playerData.totalPoints
-					clubName = self.teamIdTbl[playerData.teamId]
+					clubName = self.teamIdTbl[playerData.teamId].name
 					fOut.write("%s\t%s\t%.1f\t%d\n" % (playerData.name, clubName, playerData.nowCost/10.0, playerData.totalPoints))
 				fOut.write("\n")
 		assert totalPoints == bestSquadData.totalPoints
-		totalStrategyPoints = self._evaluateStrategy(StatType.FORM, StatType.FORM, bestSquadData)
+		totalStrategyPoints = self._evaluateStrategy(StatType.TOTAL_POINTS, StatType.TOTAL_POINTS, bestSquadData)
 		print("%d %d %d" % (totalPoints, bestSquadData.totalCost, totalStrategyPoints))
 	
 	def _dfsFindBestSquad(self, teamCountTbl, curIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn=None):
@@ -512,23 +578,28 @@ class Analyzer:
 				positionStr = self.positionIdTbl[posIdx+1]
 				assert 0, "Error: incorrect number of %s: %d. Should be %d" % (positionStr, len(curSquadData.positionTbl[posIdx]), self.positionCountTbl[posIdx])
 		
-	def _getLastCompletedGameweek(self, topLevelData):
+	def _getLastCompletedGameWeek(self, topLevelData):
 		# find first week whose data is not finished
 		for idx in range(len(topLevelData['events'])):
 			if not topLevelData['events'][idx]['finished']:
 				return topLevelData['events'][idx]['id'] # return week id, which should be same as week idx
 
-	def readDataFromJSON(self, topLevelJsonFn, gameweekJsonFn):
+	def readDataFromJSON(self, topLevelJsonFn, gameWeekPlayerJsonFn, gameWeekFixtureJsonFn):
 		fTop = open(topLevelJsonFn, 'r')
 		topLevelData = json.load(fTop)
-		self.lastCompletedGameweek = self._getLastCompletedGameweek(topLevelData)
+		self.lastCompletedGameWeek = self._getLastCompletedGameWeek(topLevelData)
 		self._readTeamDataFromJSON(topLevelData)
 		self._readPlayerDataFromJSON(topLevelData) # read cumulative data for each player
-		fGw = open(gameweekJsonFn, 'r')
-		gameweekData = json.load(fGw)
-		self._readGameWeekDataFromJSON(topLevelData, gameweekData)
+		fpgw = open(gameWeekPlayerJsonFn, 'r')
+		gameweekPlayerData = json.load(fpgw)
+		ffgw = open(gameWeekFixtureJsonFn, 'r')
+		gameWeekFixtureData = json.load(ffgw)
+		self._readGameWeekDataFromJSON(topLevelData, gameweekPlayerData, gameWeekFixtureData)
 		self._examineGameWeekData()
 		self._createPlayerPositionTbl()
+		fTop.close()
+		fpgw.close()
+		ffgw.close()
 
 	def findBestSquad(self, outFn):
 		bestSquadData = SquadData(self.numPositions)

@@ -10,15 +10,24 @@ if __name__ == '__main__':
 	fplUrl = 'https://fantasy.premierleague.com/api/'
 	data = requests.get(f"{fplUrl}bootstrap-static/").json()
 	topOutFn = 'fpl_top_data.json'
-	gameweekFn = 'fpl_gameweek_data.json'
+	gameweekPlayerFn = 'fpl_gameweek_player_data.json'
+	gameweekFixtureFn = 'fpl_gameweek_fixture_data.json'
 	with open(topOutFn, 'w') as fOut:
 		json.dump(data, fOut)
 
-	# write gameweek data to a file
-	gameweekDataTbl = {}
-	with open(gameweekFn, 'w') as fOut:
+	# write gameweek player data to a file
+	gameweekPlayerDataTbl = {}
+	with open(gameweekPlayerFn, 'w') as fOut:
 		for event in data['events']:
 			gameweekId = event['id']
-			gameweekDataTbl[gameweekId] = requests.get(f"{fplUrl}event/{gameweekId}/live/").json()
-		json.dump(gameweekDataTbl, fOut)
+			gameweekPlayerDataTbl[gameweekId] = requests.get(f"{fplUrl}event/{gameweekId}/live/").json()
+		json.dump(gameweekPlayerDataTbl, fOut)
+
+	# write gameweek fixture data to a file
+	gameweekFixtureDataTbl = {}
+	with open(gameweekFixtureFn, 'w') as fOut:
+		for event in data['events']:
+			gameweekId = event['id']
+			gameweekFixtureDataTbl[gameweekId] = requests.get(f"{fplUrl}fixtures/?event={gameweekId}").json()
+		json.dump(gameweekFixtureDataTbl, fOut)
 		
