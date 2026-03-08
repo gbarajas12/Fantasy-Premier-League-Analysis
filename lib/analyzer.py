@@ -106,8 +106,8 @@ class Analyzer:
 		self.playerNameTbl = dict() # map from player name to PlayerData
 		self.playerPositionTbl = list() # map from position idx to list of all PlayerData for that position
 		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD" }
-		self.playersToExclude = { }
-		self.budget = 1009 # in hundreds of thousands of Euros
+		self.playersToExclude = { 'Bruno Guimarães Rodriguez Moura', 'Nordi Mukiele' }
+		self.budget = 1006 # in hundreds of thousands of Euros
 		self.maxNumPlayersPerTeam = 3
 		self.numWeeksForForm = 3 # number of weeks before current week to calculate form
 		# number of players per position in a Fantasy team, including subs
@@ -289,7 +289,7 @@ class Analyzer:
 		result[:] = tempList.copy()
 	
 	def _getBestSquadByStat(self, statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain):
-		numGameWeeks = len(squadData.positionTbl[0][0].gameWeekTbl)
+		numGameWeeks = self.lastCompletedGameWeek
 		assert numGameWeeks >= weekIdx, "Error: asked for data for week idx: %d, but we only have data for %d weeks!" % (weekIdx, numGameWeeks)
 		# get list of players fir each position, sorted by decreasing statVal for this week
 		# each element is (statVal, playerData)
