@@ -129,10 +129,10 @@ class Analyzer:
 			configData = json.load(fIn)
 			excludedPlayers = configData.get('excluded_players')
 			if excludedPlayers is not None:
-				self.playersToExclude = excludedPlayers
+				self.playersToExclude = set(excludedPlayers)
 			excludedTeams = configData.get('excluded_teams')
 			if excludedTeams is not None:
-				self.teamsToExclude = excludedTeams
+				self.teamsToExclude = set(excludedTeams)
 			budget = configData.get('budget')
 			if budget is not None:
 				self.budget = budget
@@ -465,8 +465,8 @@ class Analyzer:
 				continue
 			if playerData.name in self.playersToExclude:
 				continue
-			#if len(self.playerPositionTbl[playerData.positionId-1]) == 10:
-			#	continue
+			if self.teamIdTbl[playerData.teamId].name in self.teamsToExclude:
+				continue
 			self.playerPositionTbl[playerData.positionId-1].append(playerData)
 		# now prune each position's list of players by removing the worst players.
 		# these are players with the lowest number of total points for their price
