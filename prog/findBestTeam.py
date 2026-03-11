@@ -1,26 +1,33 @@
+import argparse
 import sys
 import pathlib
 sys.path.insert(0, "%s/../lib" % pathlib.Path(__file__).parent.resolve())
 import analyzer
 			
 if __name__ == '__main__':
-	if len(sys.argv) not in [5, 6]:
-		print("Usage: python3 %s fplTopLevelJson fplGameweekPlayerJson fplGameweekFixtureData [teamPlayerList] outFn" % sys.argv[0])
-		sys.exit(1)
-	teamFn = None
-	fplTopLevelJson = sys.argv[1]
-	fplGameweekPlayerJson = sys.argv[2]
-	fplGameweekFixtureJson = sys.argv[3]
-	outFn = sys.argv[-1]
-	if len(sys.argv) == 6:
-		teamFn = sys.argv[-2]
+
+	parser = argparse.ArgumentParser(description='Finds the best team by a specified metric, given the FPL database. Run grab_fpl_data.py to generate JSON inputs')
+	parser.add_argument('fplTopLevelJSON')
+	parser.add_argument('fplGameWeekPlayerJSON')
+	parser.add_argument('fplGameWeekFixtureJSON')
+	parser.add_argument('outputFile', help='Name of file to which best team information will be written')
+	parser.add_argument('-c', '--configFile', required=False, help='Name of the file that configures analysis (e.g. which players to exclude)')
+	parser.add_argument('--inputSquad', required=False, help='Name of file containing input squad. If provided, will output best transfer choices.')
+	args = parser.parse_args()
+
+	inputSquadFn = vars(args)['inputSquad']
+	fplTopLevelJson = vars(args)['fplTopLevelJSON']
+	fplGameweekPlayerJson = vars(args)['fplGameWeekPlayerJSON']
+	fplGameweekFixtureJson = vars(args)['fplGameWeekFixtureJSON']
+	outFn = vars(args)['outputFile']
+	configFn = vars(args)['configFile']
 
 	analyzer = analyzer.Analyzer()
 	analyzer.readDataFromJSON(fplTopLevelJson, fplGameweekPlayerJson, fplGameweekFixtureJson)
 	#analyzer._runLinearRegression()
-	if teamFn is None:
+	if inputSquadFn is None:
 		analyzer.findBestSquad(outFn)
 	else:
-		analyzer.findBestTransferOptions(teamFn, outFn)
+		analyzer.findBestTransferOptions(inputSquadFn, outFn)
 
 
