@@ -106,8 +106,9 @@ class Analyzer:
 		self.playerNameTbl = dict() # map from player name to PlayerData
 		self.playerPositionTbl = list() # map from position idx to list of all PlayerData for that position
 		self.positionIdTbl = { 1 : "GK", 2 : "DEF", 3 : "MID", 4 : "FWD" }
-		self.playersToExclude = { 'Bruno Guimarães Rodriguez Moura', 'Nordi Mukiele' }
-		self.budget = 1006 # in hundreds of thousands of Euros
+		self.playersToExclude = {}
+		self.teamsToExclude = {}
+		self.budget = 1000 # in hundreds of thousands of Euros
 		self.maxNumPlayersPerTeam = 3
 		self.numWeeksForForm = 3 # number of weeks before current week to calculate form
 		# number of players per position in a Fantasy team, including subs
@@ -115,13 +116,32 @@ class Analyzer:
 		self.positionCountTbl = [ 2, 5, 5, 3, 0 ]
 		self.minPositionCountTbl = [ 1, 3, 1, 1, 0 ] # minimum number of players required per position in a game week
 		self.maxConsecutiveBadSearches = 100000000
-		self.seasonStr = '2025-26'
+		self.seasonStr = ''
 		self.numPositions = len(self.positionIdTbl)
  		# number of weeks before the present to include when gathering data for
 		# analysis. If -1 is specified, or if the number is larger than the total
 		# number of weeks in the database, all week data will be used.
 		self.numPrevWeeksForData = -1
 		self.lastCompletedGameWeek = -1
+
+	def readConfigFile(self, fn):
+		with open(fn, 'r') as fIn:
+			configData = json.load(fIn)
+			excludedPlayers = configData.get('excluded_players')
+			if excludedPlayers is not None:
+				self.playersToExclude = excludedPlayers
+			excludedTeams = configData.get('excluded_teams')
+			if excludedTeams is not None:
+				self.teamsToExclude = excludedTeams
+			budget = configData.get('budget')
+			if budget is not None:
+				self.budget = budget
+			season = configData.get('season')
+			if season is not None:
+				self.season = season
+			numPrevWeeksForData = configData.get('num_prev_weeks_for_data')
+			if numPrevWeeksForData is not None:
+				self.numPrevWeeksForData = numPrevWeeksForData
 
 	def _getLinearRegObservations(self, numFeatureWeeks, numTargetWeeks):
 		X = []

@@ -23,6 +23,8 @@ if __name__ == '__main__':
 	configFn = vars(args)['configFile']
 
 	analyzer = analyzer.Analyzer()
+	if configFn is not None:
+		analyzer.readConfigFile(configFn)
 	analyzer.readDataFromJSON(fplTopLevelJson, fplGameweekPlayerJson, fplGameweekFixtureJson)
 	#analyzer._runLinearRegression()
 	if inputSquadFn is None:
