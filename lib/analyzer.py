@@ -265,18 +265,18 @@ class Analyzer:
 		# else, odd
 		return sortedList[midIdx]
 
-	def _getStartWeek(self, numGameWeeks):
-		if self.numPrevWeeksForData == -1 or self.numPrevWeeksForData > numGameWeeks:
+	def _getStartWeek(self):
+		if self.numPrevWeeksForData == -1 or self.numPrevWeeksForData > self.lastCompletedGameWeek:
 			return 1
 		else:
-			return numGameWeeks - self.numPrevWeeksForData + 1
+			return self.lastCompletedGameWeek - self.numPrevWeeksForData + 1
 	
 	def _examineGameWeekData(self):
 		for name,playerData in self.playerNameTbl.items():
 			pointsSum = 0
 			formSum = 0
 			pointsList = list() # list of points for all weeks up to current week
-			startWeek = self._getStartWeek(len(playerData.gameWeekTbl))
+			startWeek = self._getStartWeek()
 			for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
 				gwData = playerData.gameWeekTbl.get(weekIdx)
 				if gwData == None:
@@ -432,7 +432,6 @@ class Analyzer:
 	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData):
 		if DebugFn != None:
 			fOut = open(DebugFn,'w')
-		numGameWeeks = self.lastCompletedGameWeek
 		totalPoints = 0
 		weekSquad = list() # subset of players for current week
 		weekSubs = list() # substitutes, ordered by decreasing stat of choice
@@ -440,8 +439,8 @@ class Analyzer:
 		weekViceCaptain = None
 		(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(StatType.COST, StatType.COST, 1, squadData, weekSquad, weekSubs, weekCaptain)
 		# for each week, find number of points for all players in that week's squad
-		startWeek = self._getStartWeek(numGameWeeks)
-		for weekIdx in range(startWeek, numGameWeeks):
+		startWeek = self._getStartWeek()
+		for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
 			weekPoints = self._getSquadPointsForGameWeek(weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain)
 			totalPoints += weekPoints
 			# choose squad for next week
@@ -545,8 +544,8 @@ class Analyzer:
 				if endIdx <= 0:
 					endIdx = len(allPlayerList)
 				for i in range(curIdxList[posIdx], endIdx):
-					if numConsecutiveBadSearches[0] >= self.maxConsecutiveBadSearches:
-						return
+					#if numConsecutiveBadSearches[0] >= self.maxConsecutiveBadSearches:
+					#	return
 					if curSquadData.totalCost + allPlayerList[i].nowCost > self.budget:
 						continue # we cannot complete the squad, so end this search branch
 					# check if we have reached the limit of players for the current player's club
@@ -602,7 +601,7 @@ class Analyzer:
 		# find first week whose data is not finished
 		for idx in range(len(topLevelData['events'])):
 			if not topLevelData['events'][idx]['finished']:
-				return topLevelData['events'][idx]['id'] # return week id, which should be same as week idx
+				return topLevelData['events'][idx]['id'] - 1 # return week id - 1, which should be same as week idx of last completed gameweek
 
 	def readDataFromJSON(self, topLevelJsonFn, gameWeekPlayerJsonFn, gameWeekFixtureJsonFn):
 		fTop = open(topLevelJsonFn, 'r')
