@@ -1,7 +1,9 @@
 {
-	"excluded_players": ["Bruno Guimarães Rodriguez Moura", "Nordi Mukiele"],
-	"excluded_teams": [],
+	"excluded_players": ["Bruno Guimarães Rodriguez Moura", "Nordi Mukiele", "Robin Roefs"],
+	"excluded_teams": ["Arsenal", "Man City", "Crystal Palace", "Wolves"],
 	"budget": 1006,
 	"season": "2025-26",
-	"num_prev_weeks_for_data": -1
+	"num_prev_weeks_for_data": -1,
+	"gameweek_squad_strategy": "form",
+	"gameweek_captain_strategy": "form"
 }

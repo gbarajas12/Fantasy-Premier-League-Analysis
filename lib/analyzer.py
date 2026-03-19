@@ -6,7 +6,6 @@ from sklearn import linear_model
 import matplotlib.pyplot as plt
 
 DebugFn = "week_data.txt"
-#self.positionCountTbl = [ 2, 3, 5, 3 ]
 class StatType(Enum):
 	COST           = 0
 	WEEK_POINTS    = 1
@@ -50,7 +49,6 @@ class PlayerData:
 		gwData.statTbl[StatType.WEEK_POINTS] += weekPoints
 		gwData.statTbl[StatType.COST] = weekCost
 		gwData.statTbl[StatType.MINUTES_PLAYED] += minutesPlayed
-
 
 
 # Data for one week for a Premier League Team
@@ -123,25 +121,41 @@ class Analyzer:
 		# number of weeks in the database, all week data will be used.
 		self.numPrevWeeksForData = -1
 		self.lastCompletedGameWeek = -1
+		# stats to use when finding each best gameweek squad (after finding best squad in general)
+		self.statTypeForSquad = StatType.FORM
+		self.statTypeForCaptain = StatType.FORM
 
 	def readConfigFile(self, fn):
+		def getStatFromConfigStr(string):
+			if string == "form":
+				return StatType.FORM
+			if string == "total_points":
+				return StatType.TOTAL_POINTS
+			assert 0, f"Unknown strategy type from config file: {string}"
+
 		with open(fn, 'r') as fIn:
 			configData = json.load(fIn)
-			excludedPlayers = configData.get('excluded_players')
-			if excludedPlayers is not None:
-				self.playersToExclude = set(excludedPlayers)
-			excludedTeams = configData.get('excluded_teams')
-			if excludedTeams is not None:
-				self.teamsToExclude = set(excludedTeams)
-			budget = configData.get('budget')
-			if budget is not None:
-				self.budget = budget
-			season = configData.get('season')
-			if season is not None:
-				self.season = season
-			numPrevWeeksForData = configData.get('num_prev_weeks_for_data')
-			if numPrevWeeksForData is not None:
-				self.numPrevWeeksForData = numPrevWeeksForData
+			for key, val in configData.items():
+				if key == 'excluded_players':
+					self.playersToExclude = set(val)
+				elif key == 'excluded_teams':
+					self.teamsToExclude = set(val)
+				elif key == 'budget':
+					self.budget = val
+				elif key == 'season':
+					self.season = val
+				elif key == 'num_prev_weeks_for_data':
+					self.numPrevWeeksForData = val
+				elif key == 'gameweek_squad_strategy':
+					self.statTypeForSquad = getStatFromConfigStr(val)
+				elif key == 'gameweek_captain_strategy':
+					self.statTypeForCaptain = getStatFromConfigStr(val)
+				else:
+					assert 0, f"Unknown key from config file: {key}"
+			print("Config File:\nKey\tVal")
+			for key, val in configData.items():
+				print(f"{key}\t{val}")
+			print()
 
 	def _getLinearRegObservations(self, numFeatureWeeks, numTargetWeeks):
 		X = []
@@ -526,7 +540,7 @@ class Analyzer:
 					fOut.write("%s\t%s\t%.1f\t%d\n" % (playerData.name, clubName, playerData.nowCost/10.0, playerData.totalPoints))
 				fOut.write("\n")
 		assert totalPoints == bestSquadData.totalPoints
-		totalStrategyPoints = self._evaluateStrategy(StatType.TOTAL_POINTS, StatType.TOTAL_POINTS, bestSquadData)
+		totalStrategyPoints = self._evaluateStrategy(self.statTypeForSquad, self.statTypeForCaptain, bestSquadData)
 		print("%d %d %d" % (totalPoints, bestSquadData.totalCost, totalStrategyPoints))
 	
 	def _dfsFindBestSquad(self, teamCountTbl, curIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn=None):
