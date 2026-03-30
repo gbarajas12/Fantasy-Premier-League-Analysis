@@ -589,28 +589,37 @@ class Analyzer:
 		else:
 			numConsecutiveBadSearches[0] += 1
 
-	def _readInCustomSquad(self, squadFn, playerList, curSquadData):
+	def _readInCustomSquadJSON(self, squadFn, playerList, curSquadData):
 		playerList.clear()
-		with open(squadFn,'r') as fIn:
-			lines = fIn.readlines()
-			# first line gives remaing budget in bank, in millions of euros
-			self.budget += int(float(lines[0].split()[-1]) * 10) # convert to 100,000s of euros
-			for line in lines[1:]:
-				tokens = line.split()
-				if len(tokens) == 0:
-					continue
-				playerName = line.strip()
-				playerData = self.playerNameTbl.get(playerName)
-				assert playerData != None, "Error: no player named %s. Make sure full name is spelled correctly as it appears in the database!" % playerName
-				playerList.append(playerData)
-				playerPos = playerData.positionId
-				curSquadData.positionTbl[playerPos-1].append(playerData)
+		squadValue = 0
+		with open(squadFn, 'r') as f:
+			squadData = json.load(f)
+			for key, val in squadData.items():
+				key = key.lower()
+				if key in { "keepers", "defenders", "midfielders", "forwards" }:
+					assert isinstance(val, list), "In input squad file, keepers value must be a list!"
+					for playerName in val:
+						playerData = self.playerNameTbl.get(playerName)
+						assert playerData != None, f"Error: no player named {playerName}. Make sure full name is spelled correctly as it appears in the database!"
+						playerList.append(playerData)
+						playerPos = playerData.positionId
+						curSquadData.positionTbl[playerPos-1].append(playerData)
+						squadValue += playerData.nowCost
+				elif key == "bank":
+					assert isinstance(val, (int, float)), "In input squad file, bank value must be a number"
+					bank = val
+				else:		
+					assert 0, f"Unknown key in input squad file: {key}"
+		assert bank is not None, "Must specify amount in bank for input squad!"
+		# calculate budget by adding squad value to bank value
+		self.budget = squadValue + int(float(bank) * 10) # convert to 100,000s of euros
 		# make sure we have the desired distribution of positions
 		for posIdx in range(len(curSquadData.positionTbl)):
 			if len(curSquadData.positionTbl[posIdx]) != self.positionCountTbl[posIdx]:
 				positionStr = self.positionIdTbl[posIdx+1]
-				assert 0, "Error: incorrect number of %s: %d. Should be %d" % (positionStr, len(curSquadData.positionTbl[posIdx]), self.positionCountTbl[posIdx])
-		
+				assert 0, f"Error: incorrect number of {positionStr}: {len(curSquadData.positionTbl[posIdx])}. Should be {self.positionCountTbl[posIdx]}"
+		print(f"Budget: {squadValue / 10.0}")
+					
 	def _getLastCompletedGameWeek(self, topLevelData):
 		# find first week whose data is not finished
 		for idx in range(len(topLevelData['events'])):
@@ -646,9 +655,8 @@ class Analyzer:
 		for posIdx in range(len(curSquadData.positionTbl)):
 			playerList = curSquadData.positionTbl[posIdx]
 			for playerData in playerList:
-				lastWeekData = playerData.gameWeekTbl[-1]
-				curSquadData.totalPoints += lastWeekData.statTbl[StatType.TOTAL_POINTS]
-				curSquadData.totalCost += lastWeekData.statTbl[StatType.COST]
+				curSquadData.totalPoints += playerData.totalPoints
+				curSquadData.totalCost += playerData.nowCost
 
 	def _searchForBetterPlayer(self, posIdx, playerListIdx, playerList, origSquadData, transferOptions):
 		bestSquadData = SquadData(self.numPositions)
@@ -687,10 +695,9 @@ class Analyzer:
 		# initialize budget to 0. Will be set to total cost of players + remaining in bank
 		self.budget = 0
 		# read squad data from file
-		self._readInCustomSquad(squadFn, playerList, curSquadData)
+		self._readInCustomSquadJSON(squadFn, playerList, curSquadData)
 		# find metadata of squad
 		self._findCustomSquadMetadata(curSquadData)
-		self.budget += curSquadData.totalCost
 		print("Budget: %.1fm euros" % (self.budget/10.0))
 		transferOptions = list() # list of (origPlayer, newPlayer, pointsImprovement)
 		# add all players from current squad to exclusion list
