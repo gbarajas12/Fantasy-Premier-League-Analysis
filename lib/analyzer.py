@@ -124,6 +124,10 @@ class Analyzer:
 		# stats to use when finding each best gameweek squad (after finding best squad in general)
 		self.statTypeForSquad = StatType.FORM
 		self.statTypeForCaptain = StatType.FORM
+		# squad input by user
+		self.inputSquadData = None
+		self.inputSquadPlayers = None  # set of all player IDs in input squad
+		self.maxNumTransfers = None # max set of transfers allowed from input squad
 
 	def readConfigFile(self, fn):
 		def getStatFromConfigStr(string):
@@ -470,12 +474,19 @@ class Analyzer:
 		return totalPoints
 	
 	def _createPlayerPositionTbl(self):
+		curSquadPlayerIds = set()
+		if self.inputSquadData is not None:
+			# must include these players in output table
+			for posList in self.inputSquadData.positionTbl:
+				for playerData in posList:
+					curSquadPlayerIds.add(playerData.playerId)
 		for i in range(len(self.positionIdTbl)):
 			self.playerPositionTbl.append(list())
 		for name,playerData in self.playerNameTbl.items():
 			# skip players with no points
-			if playerData.totalPoints <= 0:
+			if playerData.totalPoints <= 0 and playerData.playerId not in curSquadPlayerIds:
 				continue
+			# NOTE: the following exclusion reasons supercede keeping players on the current squad
 			if playerData.name in self.playersToExclude:
 				continue
 			if self.teamIdTbl[playerData.teamId].name in self.teamsToExclude:
@@ -490,7 +501,10 @@ class Analyzer:
 			self.playerPositionTbl[posIdx] = list()
 			for i in range(len(sortedCostList)): 
 				playerData = sortedCostList[i]
-				# ignore this player if there are enought other players with one of the following:
+				if playerData.playerId in curSquadPlayerIds:
+					self.playerPositionTbl[posIdx].append(playerData)  # must add player if in current squad
+					continue
+				# ignore this player if there are enough other players with one of the following:
 				# - lower cost, at least as many points as current player
 				# - equal cost, more points than current player
 				# If the number of better players is at least the number of required players of that position on the squad,
@@ -580,8 +594,20 @@ class Analyzer:
 					teamCountTbl[allPlayerList[i].teamId] -= 1
 				break # we have already examined all squads with the current set of players, so we can end our search
 		# here we have a complete squad to compare against the best squad yet found
+		updateBestSquad = False
 		if bestSquadData.totalPoints < curSquadData.totalPoints:
 			# update best squad data
+			if self.inputSquadPlayers is not None:
+				numPlayersFromInputSquad = 0
+				for posList in curSquadData.positionTbl:
+					for playerData in posList:
+						if playerData.playerId in self.inputSquadPlayers:
+							numPlayersFromInputSquad += 1
+				if len(self.inputSquadPlayers) - numPlayersFromInputSquad <= self.maxNumTransfers:
+					updateBestSquad = True
+			else:
+				updateBestSquad = True
+		if updateBestSquad:
 			curSquadData.copyTo(bestSquadData)
 			if outFn != None:
 				self._writeBestSquadToFile(bestSquadData, outFn)
@@ -589,7 +615,7 @@ class Analyzer:
 		else:
 			numConsecutiveBadSearches[0] += 1
 
-	def _readInCustomSquadJSON(self, squadFn, playerList, curSquadData):
+	def _readInCustomSquadJSON(self, squadFn, playerList):
 		playerList.clear()
 		squadValue = 0
 		with open(squadFn, 'r') as f:
@@ -603,7 +629,8 @@ class Analyzer:
 						assert playerData != None, f"Error: no player named {playerName}. Make sure full name is spelled correctly as it appears in the database!"
 						playerList.append(playerData)
 						playerPos = playerData.positionId
-						curSquadData.positionTbl[playerPos-1].append(playerData)
+						self.inputSquadData.positionTbl[playerPos-1].append(playerData)
+						self.inputSquadPlayers.add(playerData.playerId)
 						squadValue += playerData.nowCost
 				elif key == "bank":
 					assert isinstance(val, (int, float)), "In input squad file, bank value must be a number"
@@ -614,11 +641,10 @@ class Analyzer:
 		# calculate budget by adding squad value to bank value
 		self.budget = squadValue + int(float(bank) * 10) # convert to 100,000s of euros
 		# make sure we have the desired distribution of positions
-		for posIdx in range(len(curSquadData.positionTbl)):
-			if len(curSquadData.positionTbl[posIdx]) != self.positionCountTbl[posIdx]:
+		for posIdx in range(len(self.inputSquadData.positionTbl)):
+			if len(self.inputSquadData.positionTbl[posIdx]) != self.positionCountTbl[posIdx]:
 				positionStr = self.positionIdTbl[posIdx+1]
-				assert 0, f"Error: incorrect number of {positionStr}: {len(curSquadData.positionTbl[posIdx])}. Should be {self.positionCountTbl[posIdx]}"
-		print(f"Budget: {squadValue / 10.0}")
+				assert 0, f"Error: incorrect number of {positionStr}: {len(self.inputSquadData.positionTbl[posIdx])}. Should be {self.positionCountTbl[posIdx]}"
 					
 	def _getLastCompletedGameWeek(self, topLevelData):
 		# find first week whose data is not finished
@@ -638,12 +664,12 @@ class Analyzer:
 		gameWeekFixtureData = json.load(ffgw)
 		self._readGameWeekDataFromJSON(topLevelData, gameweekPlayerData, gameWeekFixtureData)
 		self._examineGameWeekData()
-		self._createPlayerPositionTbl()
 		fTop.close()
 		fpgw.close()
 		ffgw.close()
 
 	def findBestSquad(self, outFn):
+		self._createPlayerPositionTbl()
 		bestSquadData = SquadData(self.numPositions)
 		curSquadData = SquadData(self.numPositions)
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
@@ -651,70 +677,56 @@ class Analyzer:
 		numConsecutiveBadSearches = [0]
 		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
 
-	def _findCustomSquadMetadata(self, curSquadData):
-		for posIdx in range(len(curSquadData.positionTbl)):
-			playerList = curSquadData.positionTbl[posIdx]
+	def _findCustomSquadMetadata(self):
+		for posIdx in range(len(self.inputSquadData.positionTbl)):
+			playerList = self.inputSquadData.positionTbl[posIdx]
 			for playerData in playerList:
-				curSquadData.totalPoints += playerData.totalPoints
-				curSquadData.totalCost += playerData.nowCost
+				self.inputSquadData.totalPoints += playerData.totalPoints
+				self.inputSquadData.totalCost += playerData.nowCost
 
-	def _searchForBetterPlayer(self, posIdx, playerListIdx, playerList, origSquadData, transferOptions):
-		bestSquadData = SquadData(self.numPositions)
-		# create squad data without the given player
-		curSquadData = SquadData(self.numPositions)
-		origSquadData.copyTo(bestSquadData)
-		origSquadData.copyTo(curSquadData)
-		playerToTransfer = curSquadData.positionTbl[posIdx].pop(playerListIdx)
-		curSquadData.totalCost -= playerToTransfer.nowCost
-		curSquadData.totalPoints -= playerToTransfer.totalPoints
-		
-		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
-		for playerData in playerList:
-			if playerData.name != playerToTransfer.name:
-				teamCountTbl[playerData.teamId] += 1
-
-		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
-		numConsecutiveBadSearches = [0]
-		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches)
-		# if best squad total points did not improve over original, skip
-		pointsImprovement = bestSquadData.totalPoints - origSquadData.totalPoints
-		if pointsImprovement <= 0:
-			return
-		# check if there is a new player for the position
-		origPosPlayerNames = set()
-		for playerData in origSquadData.positionTbl[posIdx]:
-			origPosPlayerNames.add(playerData.name)
-		for playerData in bestSquadData.positionTbl[posIdx]:
-			if playerData.name not in origPosPlayerNames:
-				transferOptions.append((playerToTransfer, playerData, pointsImprovement))
-				break
-
-	def findBestTransferOptions(self, squadFn, outFn):
-		curSquadData = SquadData(self.numPositions)
+	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn):
+		self.inputSquadData = SquadData(self.numPositions)
+		self.inputSquadPlayers = set()
+		self.maxNumTransfers = maxNumTransfers
 		playerList = list()
 		# initialize budget to 0. Will be set to total cost of players + remaining in bank
 		self.budget = 0
 		# read squad data from file
-		self._readInCustomSquadJSON(squadFn, playerList, curSquadData)
+		self._readInCustomSquadJSON(squadFn, playerList)
 		# find metadata of squad
-		self._findCustomSquadMetadata(curSquadData)
+		self._findCustomSquadMetadata()
 		print("Budget: %.1fm euros" % (self.budget/10.0))
-		transferOptions = list() # list of (origPlayer, newPlayer, pointsImprovement)
-		# add all players from current squad to exclusion list
-		origExclusionList = self.playersToExclude.copy()
-		self.playersToExclude.update(playerList)
-		# for each player, search for a player that would improve the squad
-		for posIdx in range(len(curSquadData.positionTbl)):
-			for playerListIdx in range(len(curSquadData.positionTbl[posIdx])):
-				self._searchForBetterPlayer(posIdx, playerListIdx, playerList, curSquadData, transferOptions)
-		# sort by points improvement
-		transferOptions.sort(key=lambda x: x[2], reverse=True)
+		self._createPlayerPositionTbl()
+		# find best team given the max transfers allowed
+		bestSquadData = SquadData(self.numPositions)
+		self.inputSquadData.copyTo(bestSquadData)
+		curSquadData = SquadData(self.numPositions)
+		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
+		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
+		numConsecutiveBadSearches = [0]
+		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
+		# find transfer options from differences between original and best squads
+		transfersIn = list() # list of players to add
+		transfersOut = list() # list of players to remove
+		playersNotTransfered = set()
+		for posList in bestSquadData.positionTbl:
+			for playerData in posList:
+				if playerData.playerId not in self.inputSquadPlayers:
+					transfersIn.append(playerData)
+				else:
+					playersNotTransfered.add(playerData.playerId)
+		for posList in self.inputSquadData.positionTbl:
+			for playerData in posList:
+				if playerData.playerId not in playersNotTransfered:
+					transfersOut.append(playerData)
+		totalPointsImprovement = bestSquadData.totalPoints - self.inputSquadData.totalPoints
 		# write data to outfile
 		with open(outFn,'w') as fOut:
-			fOut.write("PlayerOut\tPlayerIn\tPointsImprovement\n")
-			for i in range(len(transferOptions)):
-				op = transferOptions[i]
-				fOut.write("%s\t%s\t%d\n" % (op[0].name, op[1].name, op[2]))
+			fOut.write(f"Total Points improvement: {totalPointsImprovement}\n")
+			fOut.write("Players Out:\n")
+			for p in transfersOut:
+				fOut.write(f"{p.name}\n")
+			fOut.write("\nPlayers In:\n")
+			for p in transfersIn:
+				fOut.write(f"{p.name}\n")
 
-		# set exclusion list back to original value
-		self.playersToExclude = origExclusionList.copy()
