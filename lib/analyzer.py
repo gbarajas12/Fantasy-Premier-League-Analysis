@@ -557,7 +557,7 @@ class Analyzer:
 		totalStrategyPoints = self._evaluateStrategy(self.statTypeForSquad, self.statTypeForCaptain, bestSquadData)
 		print("%d %d %d" % (totalPoints, bestSquadData.totalCost, totalStrategyPoints))
 	
-	def _dfsFindBestSquad(self, teamCountTbl, curIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn=None):
+	def _dfsFindBestSquad(self, teamCountTbl, curIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, numPlayersNotOnInputSquad=None, outFn=None):
 		# assemble every possible squad
 		#print("%d %d %d %d" % (curIdxList[0], curIdxList[1], curIdxList[2], curIdxList[3]))
 		# end search if no combination of players can be added to current squad to beat the best squad
@@ -572,6 +572,10 @@ class Analyzer:
 				if endIdx <= 0:
 					endIdx = len(allPlayerList)
 				for i in range(curIdxList[posIdx], endIdx):
+					if numPlayersNotOnInputSquad is not None:
+						if allPlayerList[i].playerId not in self.inputSquadPlayers:
+							if numPlayersNotOnInputSquad == self.maxNumTransfers:
+								continue
 					#if numConsecutiveBadSearches[0] >= self.maxConsecutiveBadSearches:
 					#	return
 					if curSquadData.totalCost + allPlayerList[i].nowCost > self.budget:
@@ -585,29 +589,22 @@ class Analyzer:
 					curSquadData.totalCost += allPlayerList[i].nowCost
 					newIdxList = curIdxList.copy()
 					newIdxList[posIdx] = i+1
+					if numPlayersNotOnInputSquad is not None:
+						if allPlayerList[i].playerId not in self.inputSquadPlayers:
+							numPlayersNotOnInputSquad += 1
 					# find all squads that include the current list of players
-					self._dfsFindBestSquad(teamCountTbl, newIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
+					self._dfsFindBestSquad(teamCountTbl, newIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, numPlayersNotOnInputSquad, outFn)
 					# remove current player before examining next player
+					if numPlayersNotOnInputSquad is not None:
+						if allPlayerList[i].playerId not in self.inputSquadPlayers:
+							numPlayersNotOnInputSquad -= 1 # reset new player count
 					curPlayerList.pop()
 					curSquadData.totalPoints -= allPlayerList[i].totalPoints
 					curSquadData.totalCost -= allPlayerList[i].nowCost
 					teamCountTbl[allPlayerList[i].teamId] -= 1
-				break # we have already examined all squads with the current set of players, so we can end our search
+				return  # we have already examined all squads with the current set of players, so we can end our search
 		# here we have a complete squad to compare against the best squad yet found
-		updateBestSquad = False
 		if bestSquadData.totalPoints < curSquadData.totalPoints:
-			# update best squad data
-			if self.inputSquadPlayers is not None:
-				numPlayersFromInputSquad = 0
-				for posList in curSquadData.positionTbl:
-					for playerData in posList:
-						if playerData.playerId in self.inputSquadPlayers:
-							numPlayersFromInputSquad += 1
-				if len(self.inputSquadPlayers) - numPlayersFromInputSquad <= self.maxNumTransfers:
-					updateBestSquad = True
-			else:
-				updateBestSquad = True
-		if updateBestSquad:
 			curSquadData.copyTo(bestSquadData)
 			if outFn != None:
 				self._writeBestSquadToFile(bestSquadData, outFn)
@@ -675,7 +672,7 @@ class Analyzer:
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
-		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
+		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, None, outFn)
 
 	def _findCustomSquadMetadata(self):
 		for posIdx in range(len(self.inputSquadData.positionTbl)):
@@ -704,7 +701,7 @@ class Analyzer:
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
-		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, outFn)
+		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, 0, outFn)
 		# find transfer options from differences between original and best squads
 		transfersIn = list() # list of players to add
 		transfersOut = list() # list of players to remove
