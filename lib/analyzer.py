@@ -604,7 +604,7 @@ class Analyzer:
 					teamCountTbl[allPlayerList[i].teamId] -= 1
 				return  # we have already examined all squads with the current set of players, so we can end our search
 		# here we have a complete squad to compare against the best squad yet found
-		if bestSquadData.totalPoints < curSquadData.totalPoints:
+		if bestSquadData.totalPoints < curSquadData.totalPoints or (bestSquadData.totalPoints == curSquadData.totalPoints and bestSquadData.totalCost > curSquadData.totalPoints):
 			curSquadData.copyTo(bestSquadData)
 			if outFn != None:
 				self._writeBestSquadToFile(bestSquadData, outFn)
