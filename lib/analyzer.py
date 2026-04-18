@@ -5,7 +5,6 @@ import json
 from sklearn import linear_model
 import matplotlib.pyplot as plt
 
-DebugFn = "week_data.txt"
 class StatType(Enum):
 	COST           = 0
 	WEEK_POINTS    = 1
@@ -73,7 +72,7 @@ class TeamData:
 		self.statTbl[StatType.GOALS_AGAINST] = 0 # total number of goals scored against this team
 		self.gameWeekTbl = dict() # map from week idx to TeamGameWeekData
 	def updateGameWeekTbl(self, weekIdx, weekGoalsFor, weekGoalsAgainst, opponentTeamId, isHomeGame):
-		assert weekIdx in [len(self.gameWeekTbl), len(self.gameWeekTbl) + 1]
+		#assert weekIdx in [len(self.gameWeekTbl), len(self.gameWeekTbl) + 1]
 		self.statTbl[StatType.GOALS_FOR] += weekGoalsFor
 		self.statTbl[StatType.GOALS_AGAINST] += weekGoalsAgainst
 		data = self.gameWeekTbl.setdefault(weekIdx, TeamGameWeekData(weekIdx))
@@ -128,6 +127,7 @@ class Analyzer:
 		self.inputSquadData = None
 		self.inputSquadPlayers = None  # set of all player IDs in input squad
 		self.maxNumTransfers = None # max set of transfers allowed from input squad
+		self.weeklyOutFn = None  # output file to write week-by-week data
 
 	def readConfigFile(self, fn):
 		def getStatFromConfigStr(string):
@@ -154,6 +154,8 @@ class Analyzer:
 					self.statTypeForSquad = getStatFromConfigStr(val)
 				elif key == 'gameweek_captain_strategy':
 					self.statTypeForCaptain = getStatFromConfigStr(val)
+				elif key == 'weekly_out_data_fn':
+					self.weeklyOutFn = val
 				else:
 					assert 0, f"Unknown key from config file: {key}"
 			print("Config File:\nKey\tVal")
@@ -448,8 +450,8 @@ class Analyzer:
 	# A separate strategy may be chosen for choosing the captain each week.
 	# NOTE: The first week's players are chose by maximizing the cost of the squad.
 	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData):
-		if DebugFn != None:
-			fOut = open(DebugFn,'w')
+		if self.weeklyOutFn != None:
+			fOut = open(self.weeklyOutFn,'w')
 		totalPoints = 0
 		weekSquad = list() # subset of players for current week
 		weekSubs = list() # substitutes, ordered by decreasing stat of choice
@@ -462,13 +464,13 @@ class Analyzer:
 			weekPoints = self._getSquadPointsForGameWeek(weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain)
 			totalPoints += weekPoints
 			# choose squad for next week
-			if DebugFn != None:
+			if self.weeklyOutFn is not None:
 				self._writeSquadWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut)
 			weekSquad = list()
 			weekSubs = list()
 			(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain)
 	
-		if DebugFn != None:
+		if self.weeklyOutFn is not None:
 			fOut.close()
 	
 		return totalPoints
