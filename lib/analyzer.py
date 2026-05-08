@@ -110,8 +110,11 @@ class Analyzer:
 		self.numWeeksForForm = 3 # number of weeks before current week to calculate form
 		# number of players per position in a Fantasy team, including subs
 		# order is GoalKeeper, Defender, Midfielder, Forward, Manager
-		self.positionCountTbl = [ 2, 5, 5, 3, 0 ]
-		self.minPositionCountTbl = [ 1, 3, 1, 1, 0 ] # minimum number of players required per position in a game week
+		self.positionCountTbl = [ 2, 5, 5, 3 ]
+		self.minPositionCountTbl = [ 1, 3, 1, 1 ] # minimum number of players required per position in a game week
+		self.maxPositionCountTbl = [ 1, 5, 5, 3 ] # maximum number of players per position in a game week
+		self.startingSquadSize = 11 # size of squad on pitch
+		self.fullSquadSize = sum(self.positionCountTbl)
 		self.maxConsecutiveBadSearches = 100000000
 		self.seasonStr = ''
 		self.numPositions = len(self.positionIdTbl)
@@ -128,6 +131,10 @@ class Analyzer:
 		self.inputSquadPlayers = None  # set of all player IDs in input squad
 		self.maxNumTransfers = None # max set of transfers allowed from input squad
 		self.weeklyOutFn = None  # output file to write week-by-week data
+		# santiy checks
+		assert len(self.minPositionCountTbl) == len(self.maxPositionCountTbl) == len(self.positionCountTbl), "Internal error: position count mismatch"
+		for minCount, maxCount in zip(self.minPositionCountTbl, self.maxPositionCountTbl):
+			assert minCount <= maxCount, "Internal error: position min count > position max count"
 
 	def readConfigFile(self, fn):
 		def getStatFromConfigStr(string):
@@ -324,45 +331,62 @@ class Analyzer:
 		for playerData in playerList:
 			if weekIdx in playerData.gameWeekTbl:
 				statVal = playerData.gameWeekTbl[weekIdx].statTbl[statType]
-				tempList.append((statVal, playerData))
+			else:
+				# search forward from weekIdx to find stat value
+				newWeekIdx = -1
+				for i in range(weekIdx + 1, self.lastCompletedGameWeek + 1):
+					if i in playerData.gameWeekTbl:
+						newWeekIdx = i
+						break
+				if newWeekIdx == -1:
+					# search backward from weekIdx to find stat value
+					for i in range(weekIdx - 1, -1, -1):
+						if i in playerData.gameWeekTbl:
+							newWeekIdx = i
+							break
+				assert newWeekIdx != -1
+				statVal = playerData.gameWeekTbl[newWeekIdx].statTbl[statType]
+			tempList.append((statVal, playerData))
 		tempList.sort(key=lambda x: x[0], reverse=True) # sort entries by player week statVal
 		result[:] = tempList.copy()
 	
 	def _getBestSquadByStat(self, statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain):
 		numGameWeeks = self.lastCompletedGameWeek
 		assert numGameWeeks >= weekIdx, "Error: asked for data for week idx: %d, but we only have data for %d weeks!" % (weekIdx, numGameWeeks)
-		# get list of players fir each position, sorted by decreasing statVal for this week
+		# get list of players for each position, sorted by decreasing statVal for this week
 		# each element is (statVal, playerData)
-		keeperList = list()
-		defenderList = list()
-		midfieldList = list()
-		forwardList = list()
-		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[0], keeperList)
-		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[1], defenderList)
-		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[2], midfieldList)
-		self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[3], forwardList)
-		# formation rules: must have 1 goalie, at least: 3 defenders, 1 mid, 1 forward
-		# choose highest statVal goalie for week 1
-		minNumDefenders = min(len(defenderList), self.minPositionCountTbl[1])
-		if len(keeperList) != 0:
-			weekSquad.append(keeperList[0][1])
-		for i in range(minNumDefenders):
-			weekSquad.append(defenderList[i][1])
-		if len(midfieldList) != 0:
-			weekSquad.append(midfieldList[0][1])
-		if len(forwardList) != 0:
-			weekSquad.append(forwardList[0][1])
-		# now we need 5 more players, which could be defenders, mid, or forwards.
-		# Choose the best out of the remaining options.
-		remainingPlayerList = defenderList[minNumDefenders:] + midfieldList[1:] + forwardList[1:]
+		weekSquadData = [list() for i in range(len(self.positionCountTbl))]
+		for i in range(len(weekSquadData)):
+			self._getStatSortedPlayerListForWeek(statTypeForSquad, weekIdx, squadData.positionTbl[i], weekSquadData[i])
+
+		# choose the minimum number of players per position based on FPL rules (stored in self.minPositionCountTbl).
+		# choose the best players for each position to fill those spots.
+		weekSquadCountTbl = [0 for i in range(len(self.positionCountTbl))]			
+		for i, posList in enumerate(weekSquadData):
+			for j in range(min(self.minPositionCountTbl[i], len(posList))):
+				weekSquad.append(posList[j][1])
+				weekSquadCountTbl[i] += 1
+		# fill the rest of the squad by choosing the best out of the remaining options, which could be any available position.
+		remainingPlayerList = []
+		for i, posList in enumerate(weekSquadData):
+			if weekSquadCountTbl[i] == self.maxPositionCountTbl[i]:
+				continue
+			remainingPlayerList += posList[weekSquadCountTbl[i]:]
+	    
+		# get best of remaining players by sorting them
 		remainingPlayerList.sort(key=lambda x: x[0], reverse=True)
-		for i in range(min(len(remainingPlayerList), 5)):
+		numSpotsToFill = self.startingSquadSize - len(weekSquad)
+		for i in range(numSpotsToFill):
 			weekSquad.append(remainingPlayerList[i][1])
 		# add the remaining players as subs
-		for i in remainingPlayerList[5:]:
-			weekSubs.append(i[1])
-		if len(keeperList) > 1:
-			weekSubs.append(keeperList[1][1])
+		for i in range(numSpotsToFill, len(remainingPlayerList)):
+			weekSubs.append(remainingPlayerList[i][1])
+		for i, posList in enumerate(weekSquadData):
+			if weekSquadCountTbl[i] == self.maxPositionCountTbl[i]:
+				for j in range(self.maxPositionCountTbl[i], len(posList)):
+					weekSubs.append(posList[j][1])
+		assert len(weekSquad) == self.startingSquadSize
+		assert len(weekSubs) == self.fullSquadSize - self.startingSquadSize, f"Internal error: number of subs in gameweek {weekIdx}: {len(weekSubs)}"
 		# now choose the captain based on the chosen stat type
 		captainSortedWeekSquad = list()
 		self._getStatSortedPlayerListForWeek(statTypeForCaptain, weekIdx, weekSquad, captainSortedWeekSquad)
@@ -394,7 +418,7 @@ class Analyzer:
 
 		# next, try to add subs in order of priority
 		for j in range(len(weekSubs)):
-			if len(finalWeekSquad) == 11:
+			if len(finalWeekSquad) == self.startingSquadSize:
 				break
 			if j not in usedSubIdxs:
 				if weekSubs[j].positionId == 1:
