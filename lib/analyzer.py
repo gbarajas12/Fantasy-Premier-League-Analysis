@@ -394,50 +394,89 @@ class Analyzer:
 
 	def _getSquadPointsForGameWeek(self, weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain):
 		finalWeekSquad = list() # final list of players selected after any substitutions
+		finalWeekSubs = list()
 		result = 0
-		posCountTbl = [0, 0, 0, 0] # number of players who did play, per position
+		posCountTbl = [0]*len(self.positionCountTbl) # number of players who did play, per position
+		missingPositionTbl = [[]]*len(self.positionCountTbl) # players who did not play, per position
+		usedPlayerIds = set()
 		for playerData in weekSquad:
 			if weekIdx in playerData.gameWeekTbl and playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
 				result += playerData.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 				posCountTbl[playerData.positionId-1] += 1
 				finalWeekSquad.append(playerData)
+				usedPlayerIds.add(playerData.playerId)
+			else:
+				missingPositionTbl[playerData.positionId-1].append(playerData)
 
-		usedSubIdxs = set()
-		# first, try to add subs to fill missing position quotas
+		# weekSubPosTbl = [[i for i in weekSubs if i.positionId - 1 == j] for j in range(len(self.positionCountTbl))]
+		# add subs to fill missing position quotas
 		for i in range(len(posCountTbl)):
-			for j in range(len(weekSubs)):
-				if posCountTbl[i] >= self.minPositionCountTbl[i]:
+			subIdx = 0
+			while posCountTbl[i] < self.minPositionCountTbl[i]:
+				if subIdx < len(weekSubs):
+					# add from subs
+					if weekSubs[subIdx].positionId - 1 == i:
+						result += weekSubs[subIdx].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+						posCountTbl[i] += 1
+						finalWeekSquad.append(weekSubs[subIdx])
+						usedPlayerIds.add(weekSubs[subIdx].playerId)
+					subIdx += 1
+				else:
+					# add from missing players
+					assert len(missingPositionTbl[i]) >= self.minPositionCountTbl[i] - posCountTbl[i]
+					for j in range(self.minPositionCountTbl[i] - posCountTbl[i]):
+						posCountTbl[i] += 1
+						finalWeekSquad.append(missingPositionTbl[i][j])
+						usedPlayerIds.add(missingPositionTbl[i][j].playerId)
 					break
-				if j not in usedSubIdxs:
-					if weekSubs[j].positionId-1 == i:
-						if weekIdx in weekSubs[j].gameWeekTbl:
-							result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-							usedSubIdxs.add(j)
-							posCountTbl[i] += 1
-							finalWeekSquad.append(weekSubs[j])
 
-		# next, try to add subs in order of priority
-		for j in range(len(weekSubs)):
+		# next, try to fill squad with any position
+		subIdx = 0
+		while len(finalWeekSquad) < self.startingSquadSize:
+			if subIdx < len(weekSubs):
+				# use sub
+				if weekSubs[subIdx].playerId not in usedPlayerIds:
+					result += weekSubs[subIdx].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+					finalWeekSquad.append(weekSubs[subIdx])
+					usedPlayerIds.add(weekSubs[subIdx].playerId)
+				subIdx += 1
+			else:
+				break
+		# fill squad with missing players
+		for posList in missingPositionTbl:
 			if len(finalWeekSquad) == self.startingSquadSize:
 				break
-			if j not in usedSubIdxs:
-				if weekSubs[j].positionId == 1:
-					continue # don't add extra keeper
-				if weekIdx in weekSubs[j].gameWeekTbl:
-					result += weekSubs[j].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-					usedSubIdxs.add(j)
-					posCountTbl[weekSubs[j].positionId-1] += 1
-					finalWeekSquad.append(weekSubs[j])
+			for playerData in posList:
+				if len(finalWeekSquad) == self.startingSquadSize:
+					break
+				if playerData.playerId not in usedPlayerIds:
+					finalWeekSquad.append(playerData)
+					usedPlayerIds.add(playerData.playerId)
+
+		# put any remaining players in finalWeekSubs
+		for playerData in weekSubs:
+			if playerData.playerId not in usedPlayerIds:
+				finalWeekSubs.append(playerData)
+				usedPlayerIds.add(playerData.playerId)
+		for posList in missingPositionTbl:
+			for playerData in posList:
+				if playerData.playerId not in usedPlayerIds:
+					finalWeekSubs.append(playerData)
+					usedPlayerIds.add(playerData.playerId)
+				
 		# replace week squad with final week squad
 		weekSquad[:] = finalWeekSquad.copy()
+		weekSubs[:] = finalWeekSubs.copy()
+
+		assert len(weekSquad) == self.startingSquadSize
+		assert len(weekSubs) == self.fullSquadSize - self.startingSquadSize, f"Internal error: number of subs in gameweek {weekIdx}: {len(weekSubs)}"
 		
 		# add the captain's week points to double-count them. If captain did not play,
 		# add vice captain's points instead
-		if weekIdx not in weekCaptain.gameWeekTbl or weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] == 0:
-			if weekIdx in weekViceCaptain.gameWeekTbl:
-				result += weekViceCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
-		elif weekIdx in weekCaptain.gameWeekTbl:
+		if weekIdx in weekCaptain.gameWeekTbl and weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
 			result += weekCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+		elif weekIdx in weekViceCaptain.gameWeekTbl:
+			result += weekViceCaptain.gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 		return result
 	
 	def _writeSquadWeekPerformanceToFile(self, weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut):
