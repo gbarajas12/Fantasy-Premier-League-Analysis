@@ -712,7 +712,8 @@ class Analyzer:
 		# find first week whose data is not finished
 		for idx in range(len(topLevelData['events'])):
 			if not topLevelData['events'][idx]['finished']:
-				return topLevelData['events'][idx]['id'] - 1 # return week id - 1, which should be same as week idx of last completed gameweek
+				return topLevelData['events'][idx]['id'] - 1  # return week id - 1, which should be same as week idx of last completed gameweek
+		return len(topLevelData['events'])  # return last game week
 
 	def readDataFromJSON(self, topLevelJsonFn, gameWeekPlayerJsonFn, gameWeekFixtureJsonFn):
 		fTop = open(topLevelJsonFn, 'r')
