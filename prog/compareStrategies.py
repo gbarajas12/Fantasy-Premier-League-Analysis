@@ -15,12 +15,13 @@ if __name__ == '__main__':
 	parser.add_argument('-c', '--configFile', required=False, help='Name of the file that configures analysis (e.g. which players to exclude)')
 	parser.add_argument('--numTrials', type=int, default=20, help='Number of randomly generated starting squads to run each strategy against')
 	parser.add_argument('--seed', type=int, required=False, help='Random seed, for reproducible comparisons')
+	parser.add_argument('--fplGameWeekCostJSON', required=False, help='Per-gameweek player cost history from grab_fpl_data.py (only available for the current in-progress season). Falls back to current price per player/week where missing.')
 	args = parser.parse_args()
 
 	analyzer = analyzer.Analyzer()
 	if args.configFile is not None:
 		analyzer.readConfigFile(args.configFile)
-	analyzer.readDataFromJSON(args.fplTopLevelJSON, args.fplGameWeekPlayerJSON, args.fplGameWeekFixtureJSON)
+	analyzer.readDataFromJSON(args.fplTopLevelJSON, args.fplGameWeekPlayerJSON, args.fplGameWeekFixtureJSON, args.fplGameWeekCostJSON)
 	results = analyzer.compareStrategies(strategies.buildDefaultStrategies(), args.numTrials, seed=args.seed, outFn=args.outputFile)
 	for name, pointsList in results.items():
 		print("%s: mean=%.1f n=%d" % (name, sum(pointsList) / len(pointsList), len(pointsList)))

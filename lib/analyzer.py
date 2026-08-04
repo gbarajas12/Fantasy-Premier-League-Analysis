@@ -245,7 +245,22 @@ class Analyzer:
 			positionId = playerData['element_type']
 			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
 
-	def _readGameWeekDataFromJSON(self, topLevelData, allGameWeekPlayerData, allGameWeekFixtureData):
+	# Looks up a player's cost for a specific gameweek from costHistoryData (as
+	# loaded from a fpl_gameweek_cost_data.json produced by grab_fpl_data.py).
+	# Falls back to fallbackCost (the player's current price) whenever the data
+	# isn't available - no cost-history file was given at all (the only option
+	# for a season that has already finished, since the FPL API stops exposing
+	# per-gameweek price history once a season rolls over), or this specific
+	# player/week is missing from it (e.g. a player who joined mid-season).
+	def _getHistoricalCost(self, costHistoryData, playerId, gameWeekId, fallbackCost):
+		if costHistoryData is None:
+			return fallbackCost
+		playerCostHistory = costHistoryData.get(str(playerId))
+		if playerCostHistory is None:
+			return fallbackCost
+		return playerCostHistory.get(str(gameWeekId), fallbackCost)
+
+	def _readGameWeekDataFromJSON(self, topLevelData, allGameWeekPlayerData, allGameWeekFixtureData, costHistoryData=None):
 		# make map from player ID to JSON top-level player data
 		playerIdToDataTbl = {}
 		for playerData in topLevelData['elements']:
@@ -269,8 +284,8 @@ class Analyzer:
 				if playerData == None:
 					print("WARNING: no top-level data for %s (data found in week id %d)" % (playerName, gameWeekId))
 					continue
-				nowCost = playerData.nowCost # FIXME: replace with actual cost this week
-				playerData.updateGameWeekTbl(gameWeekId, totalPoints, nowCost, minutesPlayed)
+				weekCost = self._getHistoricalCost(costHistoryData, playerId, gameWeekId, playerData.nowCost)
+				playerData.updateGameWeekTbl(gameWeekId, totalPoints, weekCost, minutesPlayed)
 
 			# read fixture data
 			for fixtureData in gameWeekFixtureData: 
@@ -878,7 +893,7 @@ class Analyzer:
 				return topLevelData['events'][idx]['id'] - 1  # return week id - 1, which should be same as week idx of last completed gameweek
 		return len(topLevelData['events'])  # return last game week
 
-	def readDataFromJSON(self, topLevelJsonFn, gameWeekPlayerJsonFn, gameWeekFixtureJsonFn):
+	def readDataFromJSON(self, topLevelJsonFn, gameWeekPlayerJsonFn, gameWeekFixtureJsonFn, costHistoryJsonFn=None):
 		fTop = open(topLevelJsonFn, 'r')
 		topLevelData = json.load(fTop)
 		self.lastCompletedGameWeek = self._getLastCompletedGameWeek(topLevelData)
@@ -888,11 +903,18 @@ class Analyzer:
 		gameweekPlayerData = json.load(fpgw)
 		ffgw = open(gameWeekFixtureJsonFn, 'r')
 		gameWeekFixtureData = json.load(ffgw)
-		self._readGameWeekDataFromJSON(topLevelData, gameweekPlayerData, gameWeekFixtureData)
+		costHistoryData = None
+		fCost = None
+		if costHistoryJsonFn is not None:
+			fCost = open(costHistoryJsonFn, 'r')
+			costHistoryData = json.load(fCost)
+		self._readGameWeekDataFromJSON(topLevelData, gameweekPlayerData, gameWeekFixtureData, costHistoryData)
 		self._examineGameWeekData()
 		fTop.close()
 		fpgw.close()
 		ffgw.close()
+		if fCost is not None:
+			fCost.close()
 
 	def findBestSquad(self, outFn):
 		self._createPlayerPositionTbl()

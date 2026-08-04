@@ -15,3 +15,9 @@ python3 -m pytest tests/ -v
   (season-long strategy comparison across randomly generated starting
   squads, see `lib/strategies.py`). Results are randomized, so these are
   structural/determinism checks rather than exact-value comparisons.
+- `tests/test_gameweek_cost_history.py` covers `Analyzer._getHistoricalCost`
+  (per-gameweek player price, via `readDataFromJSON`'s optional
+  `costHistoryJsonFn` param and `grab_fpl_data.py`'s
+  `fpl_gameweek_cost_data.json`). Fully synthetic - the FPL API only exposes
+  per-gameweek price history for the current in-progress season, so this
+  can't be tested against real 2025-26 data.
