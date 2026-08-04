@@ -1,26 +1,26 @@
 {
 	"keepers": [
 		"David Raya Martín",
-		"Caoimhín Kelleher"
+		"Bart Verbruggen"
 	],
 	"defenders": [
 		"Gabriel dos Santos Magalhães",
-		"Jurriën Timber",
-		"James Tarkowski",
-		"Marcos Senesi Barón",
+		"Konstantinos Mavropanos",
+		"Adrien Truffert",
+		"Virgil van Dijk",
 		"Marc Guéhi"
     ],
 	"midfielders": [
-		"Antoine Semenyo",
+		"Rayan Cherki",
 		"Carlos Henrique Casimiro",
-		"Harry Wilson",
-		"Bruno Borges Ferndandes",
+		"Morgan Gibbs-White",
+		"Bruno Borges Fernandes",
 		"Elliot Anderson"
 	],
 	"forwards": [
-		"João Pedro Junqueira de Jesus",
+		"Ollie Watkins",
 		"Igor Thiago Nascimento Rodrigues",
 		"Jarrod Bowen"
 	],
-	"bank": 1.8
+	"bank": 2.2
 }
