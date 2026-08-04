@@ -30,7 +30,7 @@ class PlayerGameWeekData:
 
 
 class PlayerData:
-	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId):
+	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch=0.0):
 		self.name = '%s %s' % (firstName, lastName)
 		self.firstName = firstName
 		self.lastName = lastName
@@ -39,9 +39,10 @@ class PlayerData:
 		self.nowCost = nowCost
 		self.teamId = teamId
 		self.positionId = positionId
-		self.gameWeekTbl = dict() # map from game week idx to PlayerGameWeekData 
+		self.pointsPerMatch = pointsPerMatch
+		self.gameWeekTbl = dict() # map from game week idx to PlayerGameWeekData
 	def copyTo(self, other):
-		other = PlayerData(self.firstName, self.lastName, self.playerId, self.totalPoints, self.nowCost, self.teamId, self.positionId)
+		other = PlayerData(self.firstName, self.lastName, self.playerId, self.totalPoints, self.nowCost, self.teamId, self.positionId, self.pointsPerMatch)
 		other.gameWeekTbl[:] = self.gameWeekTbl.copy()
 	# Updates the entry for the week (this could happen for double gameWeek).
 	def updateGameWeekTbl(self, weekIdx, weekPoints, weekCost, minutesPlayed):
@@ -88,7 +89,8 @@ class SquadData:
 	def __init__(self, numPositions):
 		self.positionTbl = list() # map from position idx to list of players for that position
 		self.totalCost = 0
-		self.totalPoints = 0
+		self.totalPoints = 0 # always real total points, regardless of squadOptimizationStat
+		self.objectiveValue = 0 # sum of whatever squadOptimizationStat is being optimized (see Analyzer._getSquadObjectiveValue)
 		for i in range(numPositions):
 			self.positionTbl.append(list())
 	def copyTo(self, other):
@@ -97,6 +99,7 @@ class SquadData:
 			other.positionTbl.append(playerList.copy())
 		other.totalCost = self.totalCost
 		other.totalPoints = self.totalPoints
+		other.objectiveValue = self.objectiveValue
 
 class Analyzer:
 	def __init__(self):
@@ -127,6 +130,8 @@ class Analyzer:
 		# stats to use when finding each best gameweek squad (after finding best squad in general)
 		self.statTypeForSquad = StatType.FORM
 		self.statTypeForCaptain = StatType.FORM
+		# which PlayerData stat findBestSquad's DFS optimizes for: 'total_points' or 'points_per_match'
+		self.squadOptimizationStat = 'total_points'
 		# squad input by user
 		self.inputSquadData = None
 		self.inputSquadPlayers = None  # set of all player IDs in input squad
@@ -243,7 +248,8 @@ class Analyzer:
 			nowCost = playerData['now_cost']
 			teamId = playerData['team']
 			positionId = playerData['element_type']
-			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId)
+			pointsPerMatch = float(playerData['points_per_game'])
+			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch)
 
 	# Looks up a player's cost for a specific gameweek from costHistoryData (as
 	# loaded from a fpl_gameweek_cost_data.json produced by grab_fpl_data.py).
@@ -553,6 +559,8 @@ class Analyzer:
 	# _applyTransfers before the next week's squad is chosen. Defaults to no-op,
 	# so every existing caller's behavior is unchanged.
 	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData, transferPolicy=None, rng=None):
+		if self.lastCompletedGameWeek < 1:
+			return 0 # no completed gameweeks yet (e.g. season hasn't started) - nothing to simulate
 		if self.weeklyOutFn != None:
 			fOut = open(self.weeklyOutFn,'w')
 		totalPoints = 0
@@ -623,6 +631,13 @@ class Analyzer:
 			return candidate
 		return None
 
+	# The scalar findBestSquad's DFS optimizes/prunes/sorts on, per
+	# self.squadOptimizationStat.
+	def _getSquadObjectiveValue(self, playerData):
+		if self.squadOptimizationStat == 'points_per_match':
+			return playerData.pointsPerMatch
+		return playerData.totalPoints
+
 	# Returns a fresh list of per-position player lists passing the exclusion
 	# filters (excluded_players/excluded_teams, must have scored this season
 	# unless in curSquadPlayerIds). No dominance pruning, no sorting: reused
@@ -652,28 +667,28 @@ class Analyzer:
 					curSquadPlayerIds.add(playerData.playerId)
 		self.playerPositionTbl = self._buildFilteredPlayerPositionLists(curSquadPlayerIds)
 		# now prune each position's list of players by removing the worst players.
-		# these are players with the lowest number of total points for their price
+		# these are players with the lowest squadOptimizationStat value for their price
 		for posIdx in range(len(self.playerPositionTbl)):
 			# list of (playerCost, playerData), sorted by decreasing cost
 			sortedCostList = sorted(self.playerPositionTbl[posIdx].copy(), key=lambda x: x.nowCost, reverse=True)
 			# clear the currently stored list. It will be replaced later.
 			self.playerPositionTbl[posIdx] = list()
-			for i in range(len(sortedCostList)): 
+			for i in range(len(sortedCostList)):
 				playerData = sortedCostList[i]
 				if playerData.playerId in curSquadPlayerIds:
 					self.playerPositionTbl[posIdx].append(playerData)  # must add player if in current squad
 					continue
 				# ignore this player if there are enough other players with one of the following:
-				# - lower cost, at least as many points as current player
-				# - equal cost, more points than current player
+				# - lower cost, at least as good squadOptimizationStat value as current player
+				# - equal cost, better squadOptimizationStat value than current player
 				# If the number of better players is at least the number of required players of that position on the squad,
 				# skip this player. (e.g. there are 2 required goalies and at least 2 goalies are better than the current one).
 				betterPlayerCount = 0
 				# only look at players that are not more expensive
 				for otherPlayerData in sortedCostList[i+1:]:
-					if otherPlayerData.nowCost < playerData.nowCost and otherPlayerData.totalPoints >= playerData.totalPoints:
+					if otherPlayerData.nowCost < playerData.nowCost and self._getSquadObjectiveValue(otherPlayerData) >= self._getSquadObjectiveValue(playerData):
 						betterPlayerCount += 1
-					elif otherPlayerData.nowCost == playerData.nowCost and otherPlayerData.totalPoints > playerData.totalPoints:
+					elif otherPlayerData.nowCost == playerData.nowCost and self._getSquadObjectiveValue(otherPlayerData) > self._getSquadObjectiveValue(playerData):
 						betterPlayerCount += 1
 					if betterPlayerCount == self.positionCountTbl[posIdx]:
 						break
@@ -681,10 +696,10 @@ class Analyzer:
 					self.playerPositionTbl[posIdx].append(playerData)
 				#if betterPlayerCount == 0:
 				#	self.playerPositionTbl[posIdx].append(playerData)
-		# sort players by decreasing total points, and then by increasing nowCost
+		# sort players by decreasing squadOptimizationStat value, and then by increasing nowCost
 		for posIdx in range(len(self.playerPositionTbl)):
 			self.playerPositionTbl[posIdx].sort(key = lambda x: x.nowCost)
-			self.playerPositionTbl[posIdx].sort(key = lambda x: x.totalPoints, reverse=True)
+			self.playerPositionTbl[posIdx].sort(key = lambda x: self._getSquadObjectiveValue(x), reverse=True)
 		#print ("%d %d %d %d" % (len(self.playerPositionTbl[0]), len(self.playerPositionTbl[1]), len(self.playerPositionTbl[2]), len(self.playerPositionTbl[3])))
 
 	# Candidate pool for random squad generation and for transfer-target search:
@@ -774,27 +789,34 @@ class Analyzer:
 	# Returns True if no combination of players can be added to the current squad to
 	# beat the best squad.
 	def _cannotBeatBestSquad(self, bestSquadData, curSquadData, curIdxList):
-		curToBestPointsDiff = bestSquadData.totalPoints - curSquadData.totalPoints
-		testPointSum = 0
+		curToBestValueDiff = bestSquadData.objectiveValue - curSquadData.objectiveValue
+		testValueSum = 0
 		for posIdx in range(len(curSquadData.positionTbl)):
 			numRemainingForPosition = self.positionCountTbl[posIdx] - len(curSquadData.positionTbl[posIdx])
 			if numRemainingForPosition > 0:
 				idx = curIdxList[posIdx]
 				for i in range(idx, idx+numRemainingForPosition):
-					testPointSum += self.playerPositionTbl[posIdx][i].totalPoints
-		return (testPointSum <= curToBestPointsDiff)
+					testValueSum += self._getSquadObjectiveValue(self.playerPositionTbl[posIdx][i])
+		return (testValueSum <= curToBestValueDiff)
 	
 	def _writeBestSquadToFile(self, bestSquadData, outFn):
 		# write outfile
 		totalPoints = 0
+		showPointsPerMatch = (self.squadOptimizationStat == 'points_per_match')
 		with open(outFn,'w') as fOut:
 			for posIdx in range(len(bestSquadData.positionTbl)):
 				fOut.write("%s\n" % self.positionIdTbl[posIdx+1])
-				fOut.write("Name\tClub\tCost\tTotal Points\n")
+				header = "Name\tClub\tCost\tTotal Points"
+				if showPointsPerMatch:
+					header += "\tPoints Per Match"
+				fOut.write("%s\n" % header)
 				for playerData in bestSquadData.positionTbl[posIdx]:
 					totalPoints += playerData.totalPoints
 					clubName = self.teamIdTbl[playerData.teamId].name
-					fOut.write("%s\t%s\t%.1f\t%d\n" % (playerData.name, clubName, playerData.nowCost/10.0, playerData.totalPoints))
+					line = "%s\t%s\t%.1f\t%d" % (playerData.name, clubName, playerData.nowCost/10.0, playerData.totalPoints)
+					if showPointsPerMatch:
+						line += "\t%.1f" % playerData.pointsPerMatch
+					fOut.write("%s\n" % line)
 				fOut.write("\n")
 		assert totalPoints == bestSquadData.totalPoints
 		totalStrategyPoints = self._evaluateStrategy(self.statTypeForSquad, self.statTypeForCaptain, bestSquadData)
@@ -829,6 +851,7 @@ class Analyzer:
 					teamCountTbl[allPlayerList[i].teamId] += 1
 					curPlayerList.append(allPlayerList[i])
 					curSquadData.totalPoints += allPlayerList[i].totalPoints
+					curSquadData.objectiveValue += self._getSquadObjectiveValue(allPlayerList[i])
 					curSquadData.totalCost += allPlayerList[i].nowCost
 					newIdxList = curIdxList.copy()
 					newIdxList[posIdx] = i+1
@@ -843,11 +866,12 @@ class Analyzer:
 							numPlayersNotOnInputSquad -= 1 # reset new player count
 					curPlayerList.pop()
 					curSquadData.totalPoints -= allPlayerList[i].totalPoints
+					curSquadData.objectiveValue -= self._getSquadObjectiveValue(allPlayerList[i])
 					curSquadData.totalCost -= allPlayerList[i].nowCost
 					teamCountTbl[allPlayerList[i].teamId] -= 1
 				return  # we have already examined all squads with the current set of players, so we can end our search
 		# here we have a complete squad to compare against the best squad yet found
-		if bestSquadData.totalPoints < curSquadData.totalPoints or (bestSquadData.totalPoints == curSquadData.totalPoints and bestSquadData.totalCost > curSquadData.totalPoints):
+		if bestSquadData.objectiveValue < curSquadData.objectiveValue or (bestSquadData.objectiveValue == curSquadData.objectiveValue and bestSquadData.totalCost > curSquadData.totalCost):
 			curSquadData.copyTo(bestSquadData)
 			if outFn != None:
 				self._writeBestSquadToFile(bestSquadData, outFn)
@@ -916,7 +940,9 @@ class Analyzer:
 		if fCost is not None:
 			fCost.close()
 
-	def findBestSquad(self, outFn):
+	def findBestSquad(self, outFn, squadStat='total_points'):
+		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
+		self.squadOptimizationStat = squadStat
 		self._createPlayerPositionTbl()
 		bestSquadData = SquadData(self.numPositions)
 		curSquadData = SquadData(self.numPositions)
@@ -933,6 +959,7 @@ class Analyzer:
 				self.inputSquadData.totalCost += playerData.nowCost
 
 	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn):
+		self.squadOptimizationStat = 'total_points' # defensive: never inherit a stat left over from a prior findBestSquad call on this instance
 		self.inputSquadData = SquadData(self.numPositions)
 		self.inputSquadPlayers = set()
 		self.maxNumTransfers = maxNumTransfers

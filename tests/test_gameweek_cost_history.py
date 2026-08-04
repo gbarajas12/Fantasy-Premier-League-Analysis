@@ -39,13 +39,13 @@ def _write_fixture_files(tmp_path, cost_history_data=None):
         "elements": [
             {"id": ALICE_ID, "first_name": "Alice", "second_name": "Alpha",
              "total_points": sum(WEEK_POINTS[ALICE_ID]), "now_cost": ALICE_NOW_COST,
-             "team": 1, "element_type": 1},
+             "team": 1, "element_type": 1, "points_per_game": "0.0"},
             {"id": BOB_ID, "first_name": "Bob", "second_name": "Beta",
              "total_points": sum(WEEK_POINTS[BOB_ID]), "now_cost": BOB_NOW_COST,
-             "team": 2, "element_type": 1},
+             "team": 2, "element_type": 1, "points_per_game": "0.0"},
             {"id": CAROL_ID, "first_name": "Carol", "second_name": "Gamma",
              "total_points": sum(WEEK_POINTS[CAROL_ID]), "now_cost": CAROL_NOW_COST,
-             "team": 1, "element_type": 1},
+             "team": 1, "element_type": 1, "points_per_game": "0.0"},
         ],
         "events": [{"id": 1, "finished": True}, {"id": 2, "finished": True}],
     }

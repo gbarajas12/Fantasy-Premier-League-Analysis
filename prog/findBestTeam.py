@@ -15,6 +15,7 @@ if __name__ == '__main__':
 	parser.add_argument('--inputSquad', required=False, help='Name of file containing input squad. If provided, will output best transfer choices.')
 	parser.add_argument('--maxNumTransfers', required=False, help='Maximum number of transfers allowed from input squad. If specified, will find best transfers instead of best overall team.')
 	parser.add_argument('--fplGameWeekCostJSON', required=False, help='Per-gameweek player cost history from grab_fpl_data.py (only available for the current in-progress season). Falls back to current price per player/week where missing.')
+	parser.add_argument('--squadStat', required=False, default='total_points', choices=['total_points', 'points_per_match'], help='Stat findBestSquad optimizes for when choosing the 15-man squad. Defaults to total_points.')
 	args = parser.parse_args()
 
 	inputSquadFn = vars(args)['inputSquad']
@@ -23,6 +24,7 @@ if __name__ == '__main__':
 	fplGameweekPlayerJson = vars(args)['fplGameWeekPlayerJSON']
 	fplGameweekFixtureJson = vars(args)['fplGameWeekFixtureJSON']
 	fplGameweekCostJson = vars(args)['fplGameWeekCostJSON']
+	squadStat = vars(args)['squadStat']
 	outFn = vars(args)['outputFile']
 	configFn = vars(args)['configFile']
 
@@ -35,6 +37,6 @@ if __name__ == '__main__':
 		maxNumTransfers = int(maxNumTransfers)
 		analyzer.findBestTransferOptions(inputSquadFn, maxNumTransfers, outFn)
 	else:
-		analyzer.findBestSquad(outFn)
+		analyzer.findBestSquad(outFn, squadStat)
 
 
