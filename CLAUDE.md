@@ -2,12 +2,16 @@
 
 ## Testing
 
-After making any change to the codebase, run the regression test:
+After making any change to the codebase, run the full test suite:
 
 ```bash
-python3 -m pytest tests/test_best_team_regression.py -v
+python3 -m pytest tests/ -v
 ```
 
-It runs `Analyzer.findBestSquad` against fixture data for the completed
-2025-26 season and checks the result matches the squad checked in at
-`2025-26/team_of_the_season.txt`.
+- `tests/test_best_team_regression.py` runs `Analyzer.findBestSquad` against
+  fixture data for the completed 2025-26 season and checks the result matches
+  the squad checked in at `2025-26/team_of_the_season.txt`.
+- `tests/test_strategy_comparison.py` covers `Analyzer.compareStrategies`
+  (season-long strategy comparison across randomly generated starting
+  squads, see `lib/strategies.py`). Results are randomized, so these are
+  structural/determinism checks rather than exact-value comparisons.

@@ -1,0 +1,96 @@
+from analyzer import StatType
+
+
+class SquadSelector:
+	# Called once per strategy (not per trial/week), for expensive-but-shared
+	# setup, e.g. recomputing StatType.FORM for a non-default window. No-op by default.
+	def prepare(self, analyzer):
+		pass
+
+	# Returns (statTypeForSquad, statTypeForCaptain). Called once per strategy,
+	# not once per week - none of the built-in strategies need the stat choice
+	# to vary mid-season. A future strategy that does would need
+	# _evaluateStrategy's loop to call this per-week instead of using fixed values.
+	def getStatTypes(self):
+		raise NotImplementedError
+
+
+class FixedStatSquadSelector(SquadSelector):
+	def __init__(self, statTypeForSquad, statTypeForCaptain=None):
+		self.statTypeForSquad = statTypeForSquad
+		self.statTypeForCaptain = statTypeForCaptain if statTypeForCaptain is not None else statTypeForSquad
+
+	def prepare(self, analyzer):
+		# StatType.FORM is shared, mutable, per-player state (see
+		# WindowedFormSquadSelector below) - a strategy using plain FORM must not
+		# silently inherit whatever window a previously-run strategy in the same
+		# compareStrategies() call left it in. Reset to the default window so
+		# this selector's behavior doesn't depend on run order.
+		if StatType.FORM in (self.statTypeForSquad, self.statTypeForCaptain):
+			analyzer._computeFormStat()
+
+	def getStatTypes(self):
+		return (self.statTypeForSquad, self.statTypeForCaptain)
+
+
+class WindowedFormSquadSelector(FixedStatSquadSelector):
+	"""'Highest points over the past N game weeks.' Reuses StatType.FORM as the
+	storage slot; prepare() recomputes it for window=windowSize (a uniform
+	divisor never changes relative order, so this is equivalent to ranking by
+	the raw N-week point sum)."""
+	def __init__(self, windowSize):
+		super().__init__(StatType.FORM, StatType.FORM)
+		self.windowSize = windowSize
+
+	def prepare(self, analyzer):
+		analyzer._computeFormStat(self.windowSize)
+
+
+class TransferPolicy:
+	# Returns [(playerOut, playerIn), ...] to apply for the upcoming week, or [].
+	# Must stay cheap (O(squad size * candidate pool size) at most) - never call
+	# _dfsFindBestSquad/findBestTransferOptions from here.
+	def selectTransfers(self, analyzer, squadData, weekIdx, weekSquad, weekSubs, rng):
+		raise NotImplementedError
+
+
+class NoTransferPolicy(TransferPolicy):
+	def selectTransfers(self, analyzer, squadData, weekIdx, weekSquad, weekSubs, rng):
+		return []
+
+
+class WorstFormTransferPolicy(TransferPolicy):
+	"""Each week, sell the single lowest-StatType.FORM squad member and buy the
+	best-FORM same-position replacement not already owned that fits budget and
+	the per-club cap. Exactly one transfer/week, matching FPL's one free
+	transfer/week, so no points-hit accounting is needed."""
+	def __init__(self):
+		self._candidatePool = None  # lazily built once, shared across all trials/weeks
+
+	def selectTransfers(self, analyzer, squadData, weekIdx, weekSquad, weekSubs, rng):
+		if self._candidatePool is None:
+			self._candidatePool = analyzer._buildRandomSquadCandidatePool()
+		allPlayers = [p for posList in squadData.positionTbl for p in posList]
+		outPlayer = min(allPlayers, key=lambda p: analyzer._getStatValueForWeek(p, StatType.FORM, weekIdx))
+		posIdx = outPlayer.positionId - 1
+		replacement = analyzer._findReplacementPlayer(
+			StatType.FORM, weekIdx, self._candidatePool[posIdx], squadData, outPlayer)
+		if replacement is None:
+			return []
+		return [(outPlayer, replacement)]
+
+
+class Strategy:
+	def __init__(self, name, squadSelector, transferPolicy=None):
+		self.name = name
+		self.squadSelector = squadSelector
+		self.transferPolicy = transferPolicy if transferPolicy is not None else NoTransferPolicy()
+
+
+def buildDefaultStrategies():
+	return [
+		Strategy("highest_total_points", FixedStatSquadSelector(StatType.TOTAL_POINTS)),
+		Strategy("last_10_weeks_points", WindowedFormSquadSelector(windowSize=10)),
+		Strategy("worst_form_transfer_out", FixedStatSquadSelector(StatType.FORM),
+				 WorstFormTransferPolicy()),
+	]

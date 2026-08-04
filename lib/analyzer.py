@@ -2,6 +2,7 @@ import sys
 import os
 from enum import Enum
 import json
+import random
 from sklearn import linear_model
 import matplotlib.pyplot as plt
 
@@ -298,10 +299,33 @@ class Analyzer:
 		else:
 			return self.lastCompletedGameWeek - self.numPrevWeeksForData + 1
 	
+	# (Re)computes StatType.FORM for every player/week using a trailing window of
+	# numWeeksForForm weeks (defaults to self.numWeeksForForm). Extracted out of
+	# _examineGameWeekData so it can be re-run with a different window (e.g. a
+	# "last N weeks" squad-selection strategy) without re-deriving
+	# TOTAL_POINTS/MEDIAN_POINTS. A uniform divisor never changes relative order,
+	# so "highest points over the last N weeks" is exactly "highest FORM with
+	# window=N" - no new StatType needed.
+	def _computeFormStat(self, numWeeksForForm=None):
+		windowSize = numWeeksForForm if numWeeksForForm is not None else self.numWeeksForForm
+		startWeek = self._getStartWeek()
+		for name,playerData in self.playerNameTbl.items():
+			formSum = 0
+			for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
+				gwData = playerData.gameWeekTbl.get(weekIdx)
+				if gwData == None:
+					continue
+				if weekIdx >= windowSize:
+					prevWeekIdx = weekIdx - windowSize
+					prevWeekData = playerData.gameWeekTbl.get(prevWeekIdx)
+					if prevWeekData != None:
+						formSum -= prevWeekData.statTbl[StatType.WEEK_POINTS]
+				formSum += gwData.statTbl[StatType.WEEK_POINTS]
+				gwData.statTbl[StatType.FORM] = formSum / windowSize
+
 	def _examineGameWeekData(self):
 		for name,playerData in self.playerNameTbl.items():
 			pointsSum = 0
-			formSum = 0
 			pointsList = list() # list of points for all weeks up to current week
 			startWeek = self._getStartWeek()
 			for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
@@ -312,19 +336,13 @@ class Analyzer:
 				pointsSum += weekPoints
 				pointsList.append(weekPoints)
 				gwData.statTbl[StatType.TOTAL_POINTS] = pointsSum
-				if weekIdx >= self.numWeeksForForm:
-					prevWeekIdx = weekIdx - self.numWeeksForForm
-					prevWeekData = playerData.gameWeekTbl.get(prevWeekIdx)
-					if prevWeekData != None:
-						formSum -= prevWeekData.statTbl[StatType.WEEK_POINTS]
-				formSum += gwData.statTbl[StatType.WEEK_POINTS]
-				gwData.statTbl[StatType.FORM] = formSum / self.numWeeksForForm
 				gwData.statTbl[StatType.MEDIAN_POINTS] = self._getMedian(pointsList)
 			if self.numPrevWeeksForData == -1:
 				if pointsSum != playerData.totalPoints:
 					print("WARNING: Player %s (id: %d, Team: %s) total points mismatch: %d (reported total) vs. %d (summed total)" % (name, playerData.playerId, self.teamIdTbl[playerData.teamId].name, playerData.totalPoints, pointsSum))
 			else:
 				playerData.totalPoints = pointsSum
+		self._computeFormStat()
 	
 	def _getStatSortedPlayerListForWeek(self, statType, weekIdx, playerList, result):
 		tempList = list() # list of (weekStat, playerData) for each player of the position in the given week
@@ -397,7 +415,7 @@ class Analyzer:
 		finalWeekSubs = list()
 		result = 0
 		posCountTbl = [0]*len(self.positionCountTbl) # number of players who did play, per position
-		missingPositionTbl = [[]]*len(self.positionCountTbl) # players who did not play, per position
+		missingPositionTbl = [list() for i in range(len(self.positionCountTbl))] # players who did not play, per position
 		usedPlayerIds = set()
 		for playerData in weekSquad:
 			if weekIdx in playerData.gameWeekTbl and playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] != 0:
@@ -416,7 +434,8 @@ class Analyzer:
 				if subIdx < len(weekSubs):
 					# add from subs
 					if weekSubs[subIdx].positionId - 1 == i:
-						result += weekSubs[subIdx].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+						if weekIdx in weekSubs[subIdx].gameWeekTbl:
+							result += weekSubs[subIdx].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 						posCountTbl[i] += 1
 						finalWeekSquad.append(weekSubs[subIdx])
 						usedPlayerIds.add(weekSubs[subIdx].playerId)
@@ -436,7 +455,8 @@ class Analyzer:
 			if subIdx < len(weekSubs):
 				# use sub
 				if weekSubs[subIdx].playerId not in usedPlayerIds:
-					result += weekSubs[subIdx].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
+					if weekIdx in weekSubs[subIdx].gameWeekTbl:
+						result += weekSubs[subIdx].gameWeekTbl[weekIdx].statTbl[StatType.WEEK_POINTS]
 					finalWeekSquad.append(weekSubs[subIdx])
 					usedPlayerIds.add(weekSubs[subIdx].playerId)
 				subIdx += 1
@@ -512,7 +532,12 @@ class Analyzer:
 	# each week will be chosen based on which players had the most total points before that week.
 	# A separate strategy may be chosen for choosing the captain each week.
 	# NOTE: The first week's players are chose by maximizing the cost of the squad.
-	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData):
+	# transferPolicy, if given, is called once per week (except the final week)
+	# with (self, squadData, weekIdx, weekSquad, weekSubs, rng) and must return a
+	# list of (playerOut, playerIn) pairs, applied to squadData in place via
+	# _applyTransfers before the next week's squad is chosen. Defaults to no-op,
+	# so every existing caller's behavior is unchanged.
+	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData, transferPolicy=None, rng=None):
 		if self.weeklyOutFn != None:
 			fOut = open(self.weeklyOutFn,'w')
 		totalPoints = 0
@@ -529,24 +554,68 @@ class Analyzer:
 			# choose squad for next week
 			if self.weeklyOutFn is not None:
 				self._writeSquadWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut)
+			if transferPolicy is not None and weekIdx < self.lastCompletedGameWeek:
+				transfers = transferPolicy.selectTransfers(self, squadData, weekIdx, weekSquad, weekSubs, rng)
+				self._applyTransfers(squadData, transfers)
 			weekSquad = list()
 			weekSubs = list()
 			(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain)
-	
+
 		if self.weeklyOutFn is not None:
 			fOut.close()
-	
+
 		return totalPoints
-	
-	def _createPlayerPositionTbl(self):
-		curSquadPlayerIds = set()
-		if self.inputSquadData is not None:
-			# must include these players in output table
-			for posList in self.inputSquadData.positionTbl:
-				for playerData in posList:
-					curSquadPlayerIds.add(playerData.playerId)
-		for i in range(len(self.positionIdTbl)):
-			self.playerPositionTbl.append(list())
+
+	# Applies a list of (playerOut, playerIn) pairs to squadData in place.
+	def _applyTransfers(self, squadData, transfers):
+		for outPlayer, inPlayer in transfers:
+			posIdx = outPlayer.positionId - 1
+			squadData.positionTbl[posIdx].remove(outPlayer)
+			squadData.positionTbl[posIdx].append(inPlayer)
+			squadData.totalCost += inPlayer.nowCost - outPlayer.nowCost
+			squadData.totalPoints += inPlayer.totalPoints - outPlayer.totalPoints
+
+	# Thin wrapper around the forward/backward-search fallback logic already in
+	# _getStatSortedPlayerListForWeek, for looking up a single player's stat value.
+	def _getStatValueForWeek(self, playerData, statType, weekIdx):
+		result = list()
+		self._getStatSortedPlayerListForWeek(statType, weekIdx, [playerData], result)
+		return result[0][0]
+
+	# Cheap O(pool size for this position) scan for a same-position replacement
+	# for outPlayerData: sorts candidatePosPool by statType for weekIdx, then
+	# returns the first candidate that (a) isn't already in squadData, (b) keeps
+	# the per-club cap satisfied after the swap, and (c) keeps totalCost within
+	# self.budget. Returns None if no valid replacement exists this week.
+	def _findReplacementPlayer(self, statType, weekIdx, candidatePosPool, squadData, outPlayerData):
+		sortedCandidates = list()
+		self._getStatSortedPlayerListForWeek(statType, weekIdx, candidatePosPool, sortedCandidates)
+		existingIds = {playerData.playerId for posList in squadData.positionTbl for playerData in posList}
+		teamCountTbl = dict()
+		for posList in squadData.positionTbl:
+			for playerData in posList:
+				teamCountTbl[playerData.teamId] = teamCountTbl.get(playerData.teamId, 0) + 1
+		for statVal, candidate in sortedCandidates:
+			if candidate.playerId in existingIds:
+				continue
+			clubCountAfter = teamCountTbl.get(candidate.teamId, 0)
+			if candidate.teamId == outPlayerData.teamId:
+				clubCountAfter -= 1
+			if clubCountAfter >= self.maxNumPlayersPerTeam:
+				continue
+			if squadData.totalCost - outPlayerData.nowCost + candidate.nowCost > self.budget:
+				continue
+			return candidate
+		return None
+
+	# Returns a fresh list of per-position player lists passing the exclusion
+	# filters (excluded_players/excluded_teams, must have scored this season
+	# unless in curSquadPlayerIds). No dominance pruning, no sorting: reused
+	# unpruned by the random squad generator, which doesn't need the search-space
+	# reduction that _createPlayerPositionTbl's pruning below provides, and
+	# shouldn't lose cheap differentials to it.
+	def _buildFilteredPlayerPositionLists(self, curSquadPlayerIds):
+		positionLists = [list() for i in range(len(self.positionIdTbl))]
 		for name,playerData in self.playerNameTbl.items():
 			# skip players with no points
 			if playerData.totalPoints <= 0 and playerData.playerId not in curSquadPlayerIds:
@@ -556,7 +625,17 @@ class Analyzer:
 				continue
 			if self.teamIdTbl[playerData.teamId].name in self.teamsToExclude:
 				continue
-			self.playerPositionTbl[playerData.positionId-1].append(playerData)
+			positionLists[playerData.positionId-1].append(playerData)
+		return positionLists
+
+	def _createPlayerPositionTbl(self):
+		curSquadPlayerIds = set()
+		if self.inputSquadData is not None:
+			# must include these players in output table
+			for posList in self.inputSquadData.positionTbl:
+				for playerData in posList:
+					curSquadPlayerIds.add(playerData.playerId)
+		self.playerPositionTbl = self._buildFilteredPlayerPositionLists(curSquadPlayerIds)
 		# now prune each position's list of players by removing the worst players.
 		# these are players with the lowest number of total points for their price
 		for posIdx in range(len(self.playerPositionTbl)):
@@ -592,7 +671,91 @@ class Analyzer:
 			self.playerPositionTbl[posIdx].sort(key = lambda x: x.nowCost)
 			self.playerPositionTbl[posIdx].sort(key = lambda x: x.totalPoints, reverse=True)
 		#print ("%d %d %d %d" % (len(self.playerPositionTbl[0]), len(self.playerPositionTbl[1]), len(self.playerPositionTbl[2]), len(self.playerPositionTbl[3])))
-	
+
+	# Candidate pool for random squad generation and for transfer-target search:
+	# same exclusion filters as _createPlayerPositionTbl, without its
+	# season-TOTAL_POINTS dominance pruning (see _buildFilteredPlayerPositionLists).
+	# Each position's list is sorted by decreasing cost once, up front.
+	def _buildRandomSquadCandidatePool(self):
+		pool = self._buildFilteredPlayerPositionLists(set())
+		for posList in pool:
+			posList.sort(key=lambda playerData: playerData.nowCost, reverse=True)
+		return pool
+
+	# Cheap, greedy, cost-weighted random fill. No DFS/backtracking: for each
+	# position slot, restrict to players that (a) aren't already picked, (b) don't
+	# breach the per-club cap, and (c) are affordable while still leaving enough
+	# budget to fill the remaining slots (reserving at least the cheapest
+	# remaining candidate's cost per remaining slot). Then pick one at random,
+	# weighted by cost, so the squad tends to use most of the budget without an
+	# exhaustive search. Retries from scratch (bounded) on a rare dead-end.
+	# rng must be a caller-supplied random.Random so a single top-level seed
+	# makes an entire comparison run reproducible.
+	def _generateRandomSquad(self, candidatePool, rng, maxAttempts=50):
+		minCost = min(playerData.nowCost for posList in candidatePool for playerData in posList)
+		for attempt in range(maxAttempts):
+			squadData = SquadData(self.numPositions)
+			teamCountTbl = dict()
+			chosenIds = set()
+			remainingBudget = self.budget
+			ok = True
+			for posIdx in range(self.numPositions):
+				for _ in range(self.positionCountTbl[posIdx]):
+					slotsLeftAfterThis = self.fullSquadSize - len(chosenIds) - 1
+					affordableMax = remainingBudget - slotsLeftAfterThis * minCost
+					eligible = [playerData for playerData in candidatePool[posIdx]
+								if playerData.playerId not in chosenIds
+								and teamCountTbl.get(playerData.teamId, 0) < self.maxNumPlayersPerTeam
+								and playerData.nowCost <= affordableMax]
+					if not eligible:
+						ok = False
+						break
+					pick = rng.choices(eligible, weights=[e.nowCost for e in eligible])[0]
+					squadData.positionTbl[posIdx].append(pick)
+					squadData.totalCost += pick.nowCost
+					squadData.totalPoints += pick.totalPoints
+					teamCountTbl[pick.teamId] = teamCountTbl.get(pick.teamId, 0) + 1
+					chosenIds.add(pick.playerId)
+					remainingBudget -= pick.nowCost
+				if not ok:
+					break
+			if ok:
+				self._topUpSquadBudget(squadData, candidatePool, rng)
+				return squadData
+		assert 0, f"Could not generate a valid random squad after {maxAttempts} attempts"
+
+	# Cheap, bounded hill-climb to spend more of the remaining budget after the
+	# initial random fill: repeatedly picks a random occupied slot and, if a
+	# same-position player not already owned is both pricier and still affordable
+	# (without breaching the club cap), swaps in the priciest such upgrade found.
+	# No DFS - just a fixed number of random probes.
+	def _topUpSquadBudget(self, squadData, candidatePool, rng, numRounds=30):
+		teamCountTbl = dict()
+		for posList in squadData.positionTbl:
+			for playerData in posList:
+				teamCountTbl[playerData.teamId] = teamCountTbl.get(playerData.teamId, 0) + 1
+		chosenIds = {playerData.playerId for posList in squadData.positionTbl for playerData in posList}
+		slots = [(posIdx, idx) for posIdx in range(self.numPositions) for idx in range(len(squadData.positionTbl[posIdx]))]
+		for _ in range(numRounds):
+			posIdx, idx = rng.choice(slots)
+			current = squadData.positionTbl[posIdx][idx]
+			maxAffordableCost = current.nowCost + (self.budget - squadData.totalCost)
+			candidates = [playerData for playerData in candidatePool[posIdx]
+						  if playerData.playerId not in chosenIds
+						  and playerData.nowCost > current.nowCost
+						  and playerData.nowCost <= maxAffordableCost
+						  and teamCountTbl.get(playerData.teamId, 0) - (1 if playerData.teamId == current.teamId else 0) < self.maxNumPlayersPerTeam]
+			if not candidates:
+				continue
+			upgrade = max(candidates, key=lambda playerData: playerData.nowCost)
+			squadData.positionTbl[posIdx][idx] = upgrade
+			squadData.totalCost += upgrade.nowCost - current.nowCost
+			squadData.totalPoints += upgrade.totalPoints - current.totalPoints
+			teamCountTbl[current.teamId] -= 1
+			teamCountTbl[upgrade.teamId] = teamCountTbl.get(upgrade.teamId, 0) + 1
+			chosenIds.discard(current.playerId)
+			chosenIds.add(upgrade.playerId)
+
 	# Returns True if no combination of players can be added to the current squad to
 	# beat the best squad.
 	def _cannotBeatBestSquad(self, bestSquadData, curSquadData, curIdxList):
@@ -792,4 +955,42 @@ class Analyzer:
 			fOut.write("\nPlayers In:\n")
 			for p in transfersIn:
 				fOut.write(f"{p.name}\n")
+
+	# Compares a list of Strategy objects (see lib/strategies.py) by running each
+	# against the SAME numTrials randomly generated starting squads (a paired
+	# comparison: using identical starting squads for every strategy means the
+	# differences in results are attributable to the strategy, not to which
+	# random squads happened to be drawn, for a lower-variance comparison).
+	# Returns {strategyName: [totalPoints, ...]}, one entry per trial. Writes a
+	# plain-text summary to outFn if given. Nothing in this path calls
+	# _dfsFindBestSquad/findBestTransferOptions - only cheap per-week heuristics.
+	def compareStrategies(self, strategyList, numTrials, seed=None, outFn=None):
+		rng = random.Random(seed)
+		candidatePool = self._buildRandomSquadCandidatePool()
+		randomSquads = [self._generateRandomSquad(candidatePool, rng) for i in range(numTrials)]
+		resultsByStrategy = dict()
+		for strategy in strategyList:
+			strategy.squadSelector.prepare(self)
+			(statTypeForSquad, statTypeForCaptain) = strategy.squadSelector.getStatTypes()
+			pointsList = list()
+			for squad in randomSquads:
+				trialSquad = SquadData(self.numPositions)
+				squad.copyTo(trialSquad)  # independent mutable copy; transfers must not leak between strategies/trials
+				totalPoints = self._evaluateStrategy(statTypeForSquad, statTypeForCaptain, trialSquad,
+													  transferPolicy=strategy.transferPolicy, rng=rng)
+				pointsList.append(totalPoints)
+			resultsByStrategy[strategy.name] = pointsList
+		if outFn is not None:
+			self._writeStrategyComparisonToFile(resultsByStrategy, outFn)
+		return resultsByStrategy
+
+	def _writeStrategyComparisonToFile(self, resultsByStrategy, outFn):
+		import statistics
+		with open(outFn, 'w') as fOut:
+			fOut.write("Strategy\tNumTrials\tMeanPoints\tStdevPoints\tMinPoints\tMaxPoints\n")
+			for name, pointsList in resultsByStrategy.items():
+				mean = statistics.mean(pointsList)
+				stdev = statistics.stdev(pointsList) if len(pointsList) > 1 else 0.0
+				fOut.write("%s\t%d\t%.1f\t%.1f\t%d\t%d\n" %
+							(name, len(pointsList), mean, stdev, min(pointsList), max(pointsList)))
 
