@@ -81,16 +81,19 @@ class WorstFormTransferPolicy(TransferPolicy):
 
 
 class Strategy:
-	def __init__(self, name, squadSelector, transferPolicy=None):
+	# A complete strategy is always both a squad selection AND a transfer
+	# policy - pass NoTransferPolicy() explicitly for a strategy that never
+	# transfers, rather than leaving transfers out as if they were optional.
+	def __init__(self, name, squadSelector, transferPolicy):
 		self.name = name
 		self.squadSelector = squadSelector
-		self.transferPolicy = transferPolicy if transferPolicy is not None else NoTransferPolicy()
+		self.transferPolicy = transferPolicy
 
 
 def buildDefaultStrategies():
 	return [
-		Strategy("highest_total_points", FixedStatSquadSelector(StatType.TOTAL_POINTS)),
-		Strategy("last_10_weeks_points", WindowedFormSquadSelector(windowSize=10)),
+		Strategy("highest_total_points", FixedStatSquadSelector(StatType.TOTAL_POINTS), NoTransferPolicy()),
+		Strategy("last_10_weeks_points", WindowedFormSquadSelector(windowSize=10), NoTransferPolicy()),
 		Strategy("worst_form_transfer_out", FixedStatSquadSelector(StatType.FORM),
 				 WorstFormTransferPolicy()),
 	]
