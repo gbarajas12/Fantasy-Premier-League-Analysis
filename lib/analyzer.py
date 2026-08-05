@@ -137,6 +137,9 @@ class Analyzer:
 		self.inputSquadPlayers = None  # set of all player IDs in input squad
 		self.maxNumTransfers = None # max set of transfers allowed from input squad
 		self.weeklyOutFn = None  # output file to write week-by-week data
+		# players findBestSquad's DFS must include in the final squad
+		self.requiredPlayers = set() # player names, from config file
+		self.requiredPlayerData = list() # resolved PlayerData, populated by _resolveRequiredPlayers
 		# santiy checks
 		assert len(self.minPositionCountTbl) == len(self.maxPositionCountTbl) == len(self.positionCountTbl), "Internal error: position count mismatch"
 		for minCount, maxCount in zip(self.minPositionCountTbl, self.maxPositionCountTbl):
@@ -157,6 +160,8 @@ class Analyzer:
 					self.playersToExclude = set(val)
 				elif key == 'excluded_teams':
 					self.teamsToExclude = set(val)
+				elif key == 'required_players':
+					self.requiredPlayers = set(val)
 				elif key == 'budget':
 					self.budget = val
 				elif key == 'season':
@@ -638,6 +643,22 @@ class Analyzer:
 			return playerData.pointsPerMatch
 		return playerData.totalPoints
 
+	# Resolves self.requiredPlayers (names, from config) into self.requiredPlayerData
+	# (PlayerData objects), for findBestSquad's DFS to force-include (see
+	# _seedMandatoryPlayers). Rebuilt fresh every call, so it's safe to call
+	# findBestSquad more than once on the same Analyzer instance. Called before
+	# _createPlayerPositionTbl, since excluded_players/excluded_teams filtering
+	# there is unconditional - a contradictory config would otherwise silently
+	# filter a required player out and crash confusingly later.
+	def _resolveRequiredPlayers(self):
+		self.requiredPlayerData = list()
+		for name in self.requiredPlayers:
+			playerData = self.playerNameTbl.get(name)
+			assert playerData is not None, f"Error: no player named {name} in required_players. Make sure full name is spelled correctly as it appears in the database!"
+			assert name not in self.playersToExclude, f"Error: {name} is in both required_players and excluded_players."
+			assert self.teamIdTbl[playerData.teamId].name not in self.teamsToExclude, f"Error: {name}'s team is in excluded_teams, but {name} is also required."
+			self.requiredPlayerData.append(playerData)
+
 	# Returns a fresh list of per-position player lists passing the exclusion
 	# filters (excluded_players/excluded_teams, must have scored this season
 	# unless in curSquadPlayerIds). No dominance pruning, no sorting: reused
@@ -665,6 +686,8 @@ class Analyzer:
 			for posList in self.inputSquadData.positionTbl:
 				for playerData in posList:
 					curSquadPlayerIds.add(playerData.playerId)
+		for playerData in self.requiredPlayerData:
+			curSquadPlayerIds.add(playerData.playerId)
 		self.playerPositionTbl = self._buildFilteredPlayerPositionLists(curSquadPlayerIds)
 		# now prune each position's list of players by removing the worst players.
 		# these are players with the lowest squadOptimizationStat value for their price
@@ -940,13 +963,60 @@ class Analyzer:
 		if fCost is not None:
 			fCost.close()
 
+	# Forces self.requiredPlayerData into curSquadData/teamCountTbl before the DFS
+	# starts, and removes them from self.playerPositionTbl so the DFS can't also
+	# independently re-pick the same player while filling the remaining slots
+	# (it has no player-identity dedup - it relies entirely on index-monotonicity
+	# into self.playerPositionTbl[posIdx]). Must run after _createPlayerPositionTbl
+	# (so self.playerPositionTbl exists and required players are guaranteed present
+	# in it, per _createPlayerPositionTbl's curSquadPlayerIds protection) and before
+	# the DFS starts.
+	def _seedMandatoryPlayers(self, curSquadData, teamCountTbl):
+		positionCounts = [0]*self.numPositions
+		clubCounts = dict()
+		requiredCost = 0
+		for playerData in self.requiredPlayerData:
+			posIdx = playerData.positionId - 1
+			positionCounts[posIdx] += 1
+			clubCounts[playerData.teamId] = clubCounts.get(playerData.teamId, 0) + 1
+			requiredCost += playerData.nowCost
+		for posIdx in range(self.numPositions):
+			positionStr = self.positionIdTbl[posIdx+1]
+			assert positionCounts[posIdx] <= self.positionCountTbl[posIdx], f"Error: too many required_players at position {positionStr}: {positionCounts[posIdx]}. Squad only has {self.positionCountTbl[posIdx]} slots for that position."
+		for teamId, count in clubCounts.items():
+			assert count <= self.maxNumPlayersPerTeam, f"Error: too many required_players from {self.teamIdTbl[teamId].name}: {count}. Max allowed per club is {self.maxNumPlayersPerTeam}."
+		assert requiredCost <= self.budget, f"Error: required_players alone cost {requiredCost/10.0}m, exceeding the budget of {self.budget/10.0}m."
+		for playerData in self.requiredPlayerData:
+			posIdx = playerData.positionId - 1
+			curSquadData.positionTbl[posIdx].append(playerData)
+			curSquadData.totalCost += playerData.nowCost
+			curSquadData.totalPoints += playerData.totalPoints
+			curSquadData.objectiveValue += self._getSquadObjectiveValue(playerData)
+			teamCountTbl[playerData.teamId] += 1
+			self.playerPositionTbl[posIdx].remove(playerData)
+		# Cheap upfront feasibility check: can the remaining slots even be afforded?
+		# Without this, an infeasible required_players config doesn't crash (the
+		# DFS's own budget/club-cap checks just prune every branch) - it silently
+		# produces no output file after a potentially very long search. Turn that
+		# into an immediate, clear error instead.
+		minRemainingCost = 0
+		for posIdx in range(self.numPositions):
+			numRemainingForPosition = self.positionCountTbl[posIdx] - len(curSquadData.positionTbl[posIdx])
+			if numRemainingForPosition > 0:
+				cheapest = sorted(p.nowCost for p in self.playerPositionTbl[posIdx])[:numRemainingForPosition]
+				assert len(cheapest) == numRemainingForPosition, f"Error: not enough eligible players at position {self.positionIdTbl[posIdx+1]} to complete the squad after required_players."
+				minRemainingCost += sum(cheapest)
+		assert curSquadData.totalCost + minRemainingCost <= self.budget, f"Error: required_players plus the cheapest possible remaining squad would cost {(curSquadData.totalCost + minRemainingCost)/10.0}m, exceeding the budget of {self.budget/10.0}m."
+
 	def findBestSquad(self, outFn, squadStat='total_points'):
 		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
 		self.squadOptimizationStat = squadStat
+		self._resolveRequiredPlayers()
 		self._createPlayerPositionTbl()
 		bestSquadData = SquadData(self.numPositions)
 		curSquadData = SquadData(self.numPositions)
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
+		self._seedMandatoryPlayers(curSquadData, teamCountTbl)
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
 		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, None, outFn)

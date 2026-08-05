@@ -26,3 +26,7 @@ python3 -m pytest tests/ -v
   FPL's `points_per_game` field). Fully synthetic - real 2025-26
   `points_per_game` data isn't reliably recoverable from any archived pull on
   disk (checked: stale/mismatched vs. the test fixtures).
+- `tests/test_required_players.py` covers the `required_players` config key,
+  which forces `Analyzer.findBestSquad`'s DFS to include specific players in
+  the final squad (`Analyzer._resolveRequiredPlayers` /
+  `Analyzer._seedMandatoryPlayers`). Fully synthetic.
