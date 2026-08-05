@@ -1090,6 +1090,7 @@ class Analyzer:
 		resultsByStrategy = dict()
 		for strategy in strategyList:
 			strategy.squadSelector.prepare(self)
+			strategy.transferPolicy.prepare(self) # after squadSelector's, in case both touch StatType.FORM
 			(statTypeForSquad, statTypeForCaptain) = strategy.squadSelector.getStatTypes()
 			pointsList = list()
 			for squad in randomSquads:

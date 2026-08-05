@@ -92,6 +92,7 @@ def test_no_transfer_strategy_never_mutates_the_squad(loaded_analyzer):
     baseSquad.copyTo(trialSquad)
     strategy = strategies.Strategy("highest_total_points", strategies.FixedStatSquadSelector(analyzer.StatType.TOTAL_POINTS), strategies.NoTransferPolicy())
     strategy.squadSelector.prepare(a)
+    strategy.transferPolicy.prepare(a)
     (statSquad, statCaptain) = strategy.squadSelector.getStatTypes()
     a._evaluateStrategy(statSquad, statCaptain, trialSquad, transferPolicy=strategy.transferPolicy, rng=rng)
 
@@ -113,6 +114,7 @@ def test_worst_form_transfer_strategy_stays_legal_after_a_full_season(loaded_ana
         strategies.WorstFormTransferPolicy(),
     )
     strategy.squadSelector.prepare(a)
+    strategy.transferPolicy.prepare(a)
     (statSquad, statCaptain) = strategy.squadSelector.getStatTypes()
     a._evaluateStrategy(statSquad, statCaptain, trialSquad, transferPolicy=strategy.transferPolicy, rng=rng)
 
@@ -137,6 +139,7 @@ def test_worst_form_transfer_strategy_changes_the_squad(loaded_analyzer):
         strategies.WorstFormTransferPolicy(),
     )
     strategy.squadSelector.prepare(a)
+    strategy.transferPolicy.prepare(a)
     (statSquad, statCaptain) = strategy.squadSelector.getStatTypes()
     a._evaluateStrategy(statSquad, statCaptain, trialSquad, transferPolicy=strategy.transferPolicy, rng=rng)
 
