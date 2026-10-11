@@ -96,6 +96,58 @@ class WorstFormTransferPolicy(TransferPolicy):
 		return [(outPlayer, replacement)]
 
 
+class WildcardTransferPolicy(TransferPolicy):
+	"""Plays the wildcard chip: in the gameweeks in wildcardWeeks, unlimited
+	transfers rebuild the squad into the best squad by points over the trailing
+	windowSize weeks (see Analyzer.getBestSquadForWeek, an exhaustive search
+	computed once and cached, shared by every trial); in every other week it defers to
+	baseTransferPolicy. FPL allows one wildcard in each half of the season, so at
+	most one of wildcardWeeks may be in gameweeks 1-19 and one in 20-38.
+
+	wildcardWeeks are the gameweeks the chip is played IN. Transfers chosen after
+	gameweek G-1 take effect in gameweek G, so the chip can't be played in
+	gameweek 1 (the starting squad is fixed before it). The rebuild uses the
+	data up to gameweek G-1 only. Weeks past the available data are ignored with
+	a warning. Stateless across trials."""
+	NUM_GAMEWEEKS = 38
+	LAST_FIRST_HALF_WEEK = 19
+
+	def __init__(self, baseTransferPolicy, wildcardWeeks, windowSize):
+		wildcardWeeks = list(wildcardWeeks)
+		for week in wildcardWeeks:
+			assert isinstance(week, int) and 2 <= week <= self.NUM_GAMEWEEKS, f"Error: wildcard week must be an integer from 2 to {self.NUM_GAMEWEEKS}, got {week!r}"
+		assert len(set(wildcardWeeks)) == len(wildcardWeeks), f"Error: duplicate wildcard weeks: {wildcardWeeks}"
+		assert sum(1 for week in wildcardWeeks if week <= self.LAST_FIRST_HALF_WEEK) <= 1, f"Error: at most one wildcard may be played in gameweeks 1-{self.LAST_FIRST_HALF_WEEK}: {wildcardWeeks}"
+		assert sum(1 for week in wildcardWeeks if week > self.LAST_FIRST_HALF_WEEK) <= 1, f"Error: at most one wildcard may be played in gameweeks {self.LAST_FIRST_HALF_WEEK + 1}-{self.NUM_GAMEWEEKS}: {wildcardWeeks}"
+		assert isinstance(windowSize, int) and windowSize >= 1, f"Error: wildcard windowSize must be a positive integer, got {windowSize!r}"
+		self.baseTransferPolicy = baseTransferPolicy
+		self.wildcardWeeks = frozenset(wildcardWeeks)
+		self.windowSize = windowSize
+
+	def prepare(self, analyzer):
+		self.baseTransferPolicy.prepare(analyzer)
+		for week in sorted(self.wildcardWeeks):
+			if week - 1 < analyzer._getStartWeek() or week > analyzer.lastCompletedGameWeek:
+				print(f"WARNING: wildcard week {week} is outside the available data (gameweeks {analyzer._getStartWeek()+1}-{analyzer.lastCompletedGameWeek}), so it will never be played")
+			else:
+				analyzer.getBestSquadForWeek(week - 1, self.windowSize) # build/cache now rather than mid-trial
+
+	def selectTransfers(self, analyzer, squadData, weekIdx, weekSquad, weekSubs, rng):
+		if weekIdx + 1 not in self.wildcardWeeks:
+			return self.baseTransferPolicy.selectTransfers(analyzer, squadData, weekIdx, weekSquad, weekSubs, rng)
+		targetSquad = analyzer.getBestSquadForWeek(weekIdx, self.windowSize)
+		transfers = []
+		for posIdx, targetPlayers in enumerate(targetSquad):
+			currentPlayers = squadData.positionTbl[posIdx]
+			targetIds = {p.playerId for p in targetPlayers}
+			currentIds = {p.playerId for p in currentPlayers}
+			outPlayers = [p for p in currentPlayers if p.playerId not in targetIds]
+			inPlayers = [p for p in targetPlayers if p.playerId not in currentIds]
+			assert len(outPlayers) == len(inPlayers)
+			transfers.extend(zip(outPlayers, inPlayers))
+		return transfers
+
+
 class Strategy:
 	# A complete strategy is always both a squad selection AND a transfer
 	# policy - pass NoTransferPolicy() explicitly for a strategy that never
@@ -109,12 +161,20 @@ class Strategy:
 # Squad-selection form windows to compare, in gameweeks. Each gets its own
 # strategy: pick the squad by highest points over the trailing N weeks, never
 # transfer. Add/remove numbers here to change what compareStrategies() runs.
-SQUAD_FORM_WINDOWS = [3, 5, 10]
+SQUAD_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
 
 # Transfer-policy form windows to compare, in gameweeks. Each gets its own
 # strategy: keep the baseline (total-points) squad selection, but sell the
 # worst-FORM player each week using a trailing N-week window.
-TRANSFER_FORM_WINDOWS = [3, 5, 10]
+TRANSFER_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
+
+
+# Wildcard comparisons: each schedule (the gameweeks the chip is played in, at
+# most one per half-season) is paired with each window, giving the strategy
+# squad_transfer_form_<N>w plus a wildcard. Use windows that are also in
+# SQUAD_FORM_WINDOWS to have the matching no-wildcard strategy to compare to.
+WILDCARD_WINDOWS = [10]
+WILDCARD_SCHEDULES = [[10, 30]]
 
 
 def buildDefaultStrategies():
@@ -135,4 +195,17 @@ def buildDefaultStrategies():
 			FixedStatSquadSelector(StatType.TOTAL_POINTS),
 			WorstFormTransferPolicy(windowSize=windowSize),
 		))
+	for windowSize in SQUAD_FORM_WINDOWS:
+		strategies.append(Strategy(
+			f"squad_transfer_form_{windowSize}w",
+			WindowedFormSquadSelector(windowSize=windowSize),
+			WorstFormTransferPolicy(windowSize=windowSize),
+		))
+	for windowSize in WILDCARD_WINDOWS:
+		for schedule in WILDCARD_SCHEDULES:
+			strategies.append(Strategy(
+				f"squad_transfer_form_{windowSize}w_wc{'_'.join(str(week) for week in schedule)}",
+				WindowedFormSquadSelector(windowSize=windowSize),
+				WildcardTransferPolicy(WorstFormTransferPolicy(windowSize=windowSize), schedule, windowSize),
+			))
 	return strategies

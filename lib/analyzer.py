@@ -133,6 +133,10 @@ class Analyzer:
 		self.statTypeForCaptain = StatType.FORM
 		# which PlayerData stat findBestSquad's DFS optimizes for: 'total_points' or 'points_per_match'
 		self.squadOptimizationStat = 'total_points'
+		# when set, maps playerId -> the value the DFS optimizes instead of squadOptimizationStat
+		# (see getBestSquadForWeek)
+		self.objectiveTbl = None
+		self.bestSquadTbl = dict() # cache for getBestSquadForWeek
 		# squad input by user
 		self.inputSquadData = None
 		self.inputSquadPlayers = None  # set of all player IDs in input squad
@@ -640,6 +644,9 @@ class Analyzer:
 	# The scalar findBestSquad's DFS optimizes/prunes/sorts on, per
 	# self.squadOptimizationStat.
 	def _getSquadObjectiveValue(self, playerData):
+		tbl = self.objectiveTbl
+		if tbl is not None:
+			return tbl[playerData.playerId]
 		if self.squadOptimizationStat == 'points_per_match':
 			return playerData.pointsPerMatch
 		return playerData.totalPoints
@@ -1035,10 +1042,10 @@ class Analyzer:
 			json.dump(squadJson, fOut, indent='\t', ensure_ascii=False)
 			fOut.write("\n")
 
-	def findBestSquad(self, outFn, squadStat='total_points', outSquadJsonFn=None):
-		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
-		self.squadOptimizationStat = squadStat
-		self._resolveRequiredPlayers()
+	# Runs the exhaustive search for the best squad under the current objective
+	# (self.squadOptimizationStat / self.objectiveTbl) and returns it. If outFn is
+	# given, every improved squad found is also written to it as the search goes.
+	def _searchBestSquad(self, outFn):
 		self._createPlayerPositionTbl()
 		bestSquadData = SquadData(self.numPositions)
 		curSquadData = SquadData(self.numPositions)
@@ -1047,8 +1054,56 @@ class Analyzer:
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
 		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, None, outFn)
+		return bestSquadData
+
+	def findBestSquad(self, outFn, squadStat='total_points', outSquadJsonFn=None):
+		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
+		self.squadOptimizationStat = squadStat
+		self._resolveRequiredPlayers()
+		bestSquadData = self._searchBestSquad(outFn)
 		if outSquadJsonFn is not None:
 			self._writeSquadToJSON(bestSquadData, outSquadJsonFn)
+
+	# playerId -> points scored over the windowSize gameweeks ending at weekIdx
+	# (only gameweeks in the analysis range), as an exact integer. Built straight
+	# from the weekly points rather than StatType.FORM so it never reads past
+	# weekIdx (no lookahead), has no float rounding for the DFS to trip over, and
+	# doesn't depend on whichever FORM window is currently active. Players with no
+	# gameweek entry at or before weekIdx (not in the game yet) get a large
+	# negative value so the search never picks them.
+	def _buildTrailingPointsObjectiveTbl(self, weekIdx, windowSize):
+		firstWeek = max(self._getStartWeek(), weekIdx - windowSize + 1)
+		tbl = dict()
+		for playerData in self.playerNameTbl.values():
+			gwTbl = playerData.gameWeekTbl
+			if not any(weekIdx >= gwIdx for gwIdx in gwTbl):
+				tbl[playerData.playerId] = -10**6
+				continue
+			tbl[playerData.playerId] = sum(gwTbl[gwIdx].statTbl[StatType.WEEK_POINTS] for gwIdx in range(firstWeek, weekIdx + 1) if gwIdx in gwTbl)
+		return tbl
+
+	# The best squad (exhaustive search) by points over the windowSize gameweeks
+	# ending at weekIdx, as a tuple of per-position tuples of PlayerData. It
+	# depends only on the data and config, not on any trial squad, so it is
+	# computed once per (weekIdx, windowSize) and cached; used by wildcard policies.
+	# Ignores required_players (those apply to findBestSquad's starting squad).
+	def getBestSquadForWeek(self, weekIdx, windowSize):
+		key = (weekIdx, windowSize, self.budget, frozenset(self.playersToExclude), frozenset(self.teamsToExclude),
+			   self.maxNumPlayersPerTeam, tuple(self.positionCountTbl))
+		if key in self.bestSquadTbl:
+			return self.bestSquadTbl[key]
+		saved = (self.objectiveTbl, self.playerPositionTbl, self.requiredPlayerData, self.inputSquadData)
+		try:
+			self.objectiveTbl = self._buildTrailingPointsObjectiveTbl(weekIdx, windowSize)
+			self.requiredPlayerData = list()
+			self.inputSquadData = None
+			bestSquadData = self._searchBestSquad(None)
+		finally:
+			(self.objectiveTbl, self.playerPositionTbl, self.requiredPlayerData, self.inputSquadData) = saved
+		assert sum(len(posList) for posList in bestSquadData.positionTbl) == self.fullSquadSize, f"Error: no complete squad found for week {weekIdx}, window {windowSize}"
+		result = tuple(tuple(posList) for posList in bestSquadData.positionTbl)
+		self.bestSquadTbl[key] = result
+		return result
 
 	def _findCustomSquadMetadata(self):
 		for posIdx in range(len(self.inputSquadData.positionTbl)):

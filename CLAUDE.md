@@ -40,3 +40,6 @@ python3 -m pytest tests/ -v
 - `tests/test_output_squad_json.py` covers the optional squad JSON output
   (`--outputSquadJSON`) of `Analyzer.findBestSquad` and
   `Analyzer.findBestTransferOptions`, written in the input squad file format.
+- `tests/test_wildcard.py` covers the wildcard chip: `Analyzer.getBestSquadForWeek`
+  (the cached exhaustive best-squad table by trailing-N-week points) and
+  `strategies.WildcardTransferPolicy`.
