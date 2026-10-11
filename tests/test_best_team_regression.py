@@ -54,11 +54,7 @@ def test_best_team_matches_checked_in_team_of_the_season(analyzer_module, tmp_pa
     analyzer.statTypeForSquad = analyzer_module.StatType.FORM
     analyzer.statTypeForCaptain = analyzer_module.StatType.FORM
 
-    analyzer.readDataFromJSON(
-        str(FIXTURE_DIR / "top_level.json"),
-        str(FIXTURE_DIR / "gameweek_player.json"),
-        str(FIXTURE_DIR / "gameweek_fixture.json"),
-    )
+    analyzer.readDataFromDir(str(FIXTURE_DIR))
 
     out_file = tmp_path / "best_team.out"
     analyzer.findBestSquad(str(out_file))

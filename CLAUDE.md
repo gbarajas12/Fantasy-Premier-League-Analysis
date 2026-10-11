@@ -30,3 +30,7 @@ python3 -m pytest tests/ -v
   which forces `Analyzer.findBestSquad`'s DFS to include specific players in
   the final squad (`Analyzer._resolveRequiredPlayers` /
   `Analyzer._seedMandatoryPlayers`). Fully synthetic.
+- `tests/test_data_dir.py` covers `Analyzer.readDataFromDir`, which reads the
+  standard-named files (`lib/fpl_data_files.py`) from an FPL data directory,
+  the single data argument taken by `prog/findBestTeam.py`,
+  `prog/compareStrategies.py` and `prog/grab_fpl_data.py`.

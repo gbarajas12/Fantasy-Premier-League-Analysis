@@ -2,7 +2,7 @@
 wired through readDataFromJSON's optional costHistoryJsonFn param).
 
 Fully synthetic and self-contained - no network access, no dependency on
-tests/fixtures/season_2025_26/ (whose gameweek_player.json has no cost data
+tests/fixtures/season_2025_26/ (whose fpl_gameweek_player_data.json has no cost data
 and never can, since the FPL API only exposes per-gameweek price history for
 the currently in-progress season - see CLAUDE.md/season_strategy_prompt.txt
 context). Files are written to tmp_path and loaded through the real

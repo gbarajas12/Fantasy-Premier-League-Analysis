@@ -3,6 +3,7 @@ import os
 from enum import Enum
 import json
 import random
+import fpl_data_files
 from sklearn import linear_model
 import matplotlib.pyplot as plt
 
@@ -962,6 +963,18 @@ class Analyzer:
 		ffgw.close()
 		if fCost is not None:
 			fCost.close()
+
+	# Reads the standard-named files (see fpl_data_files.py) out of dataDir, as
+	# written by grab_fpl_data.py. The per-gameweek cost file is optional: it is
+	# used if present, otherwise cost falls back to each player's current price.
+	def readDataFromDir(self, dataDir):
+		def path(fn):
+			return os.path.join(dataDir, fn)
+		for fn in (fpl_data_files.TOP_LEVEL_FN, fpl_data_files.GAMEWEEK_PLAYER_FN, fpl_data_files.GAMEWEEK_FIXTURE_FN):
+			assert os.path.isfile(path(fn)), f"Error: {fn} not found in FPL data directory {dataDir}. Run grab_fpl_data.py to generate it."
+		costFn = path(fpl_data_files.GAMEWEEK_COST_FN)
+		self.readDataFromJSON(path(fpl_data_files.TOP_LEVEL_FN), path(fpl_data_files.GAMEWEEK_PLAYER_FN),
+							  path(fpl_data_files.GAMEWEEK_FIXTURE_FN), costFn if os.path.isfile(costFn) else None)
 
 	# Forces self.requiredPlayerData into curSquadData/teamCountTbl before the DFS
 	# starts, and removes them from self.playerPositionTbl so the DFS can't also

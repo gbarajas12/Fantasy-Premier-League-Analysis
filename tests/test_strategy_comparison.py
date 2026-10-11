@@ -46,11 +46,7 @@ def _assert_squad_is_legal(a, squadData):
 @pytest.fixture(scope="module")
 def loaded_analyzer():
     a = analyzer.Analyzer()
-    a.readDataFromJSON(
-        str(FIXTURE_DIR / "top_level.json"),
-        str(FIXTURE_DIR / "gameweek_player.json"),
-        str(FIXTURE_DIR / "gameweek_fixture.json"),
-    )
+    a.readDataFromDir(str(FIXTURE_DIR))
     return a
 
 
