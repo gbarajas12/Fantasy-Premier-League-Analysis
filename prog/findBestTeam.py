@@ -13,12 +13,14 @@ if __name__ == '__main__':
 	parser.add_argument('--inputSquad', required=False, help='Name of file containing input squad. If provided, will output best transfer choices.')
 	parser.add_argument('--maxNumTransfers', required=False, help='Maximum number of transfers allowed from input squad. If specified, will find best transfers instead of best overall team.')
 	parser.add_argument('--squadStat', required=False, default='total_points', choices=['total_points', 'points_per_match'], help='Stat findBestSquad optimizes for when choosing the 15-man squad. Defaults to total_points.')
+	parser.add_argument('--outputSquadJSON', required=False, help='Name of file to which the resulting squad will be written as json, in the same format as the --inputSquad file. For best transfers, this is the input squad with the transfers applied.')
 	args = parser.parse_args()
 
 	inputSquadFn = vars(args)['inputSquad']
 	maxNumTransfers = vars(args)['maxNumTransfers']
 	fplDataDir = vars(args)['fplDataDir']
 	squadStat = vars(args)['squadStat']
+	outputSquadJson = vars(args)['outputSquadJSON']
 	outFn = vars(args)['outputFile']
 	configFn = vars(args)['configFile']
 
@@ -29,8 +31,8 @@ if __name__ == '__main__':
 	#analyzer._runLinearRegression()
 	if inputSquadFn is not None and maxNumTransfers is not None:
 		maxNumTransfers = int(maxNumTransfers)
-		analyzer.findBestTransferOptions(inputSquadFn, maxNumTransfers, outFn)
+		analyzer.findBestTransferOptions(inputSquadFn, maxNumTransfers, outFn, outputSquadJson)
 	else:
-		analyzer.findBestSquad(outFn, squadStat)
+		analyzer.findBestSquad(outFn, squadStat, outputSquadJson)
 
 

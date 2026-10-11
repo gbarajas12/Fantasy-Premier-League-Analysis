@@ -1022,7 +1022,20 @@ class Analyzer:
 				minRemainingCost += sum(cheapest)
 		assert curSquadData.totalCost + minRemainingCost <= self.budget, f"Error: required_players plus the cheapest possible remaining squad would cost {(curSquadData.totalCost + minRemainingCost)/10.0}m, exceeding the budget of {self.budget/10.0}m."
 
-	def findBestSquad(self, outFn, squadStat='total_points'):
+	# Writes squadData in the input squad file format (see _readInCustomSquadJSON):
+	# player names by position, plus the money left in the bank (in millions) out
+	# of the budget, so the file can be fed back in as an input squad.
+	def _writeSquadToJSON(self, squadData, outFn):
+		assert sum(len(posList) for posList in squadData.positionTbl) == self.fullSquadSize, "Error: no complete squad was found to write to " + outFn
+		squadJson = dict()
+		for key, posList in zip(("keepers", "defenders", "midfielders", "forwards"), squadData.positionTbl):
+			squadJson[key] = [playerData.name for playerData in posList]
+		squadJson["bank"] = round((self.budget - squadData.totalCost) / 10.0, 1)
+		with open(outFn, 'w', encoding='utf-8') as fOut:
+			json.dump(squadJson, fOut, indent='\t', ensure_ascii=False)
+			fOut.write("\n")
+
+	def findBestSquad(self, outFn, squadStat='total_points', outSquadJsonFn=None):
 		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
 		self.squadOptimizationStat = squadStat
 		self._resolveRequiredPlayers()
@@ -1034,6 +1047,8 @@ class Analyzer:
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
 		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, None, outFn)
+		if outSquadJsonFn is not None:
+			self._writeSquadToJSON(bestSquadData, outSquadJsonFn)
 
 	def _findCustomSquadMetadata(self):
 		for posIdx in range(len(self.inputSquadData.positionTbl)):
@@ -1055,7 +1070,7 @@ class Analyzer:
 		activeSquadPoints = self._evaluateStrategy(self.statTypeForSquad, self.statTypeForCaptain, self.inputSquadData)
 		return (self.inputSquadData.totalPoints, activeSquadPoints)
 
-	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn):
+	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn, outSquadJsonFn=None):
 		self.squadOptimizationStat = 'total_points' # defensive: never inherit a stat left over from a prior findBestSquad call on this instance
 		self.inputSquadData = SquadData(self.numPositions)
 		self.inputSquadPlayers = set()
@@ -1101,6 +1116,15 @@ class Analyzer:
 			fOut.write("\nPlayers In:\n")
 			for p in transfersIn:
 				fOut.write(f"{p.name}\n")
+		if outSquadJsonFn is not None:
+			# the input squad with the transfers applied: each transferred-out player is
+			# replaced in place by a transferred-in player of the same position
+			newSquadData = SquadData(self.numPositions)
+			for posIdx in range(self.numPositions):
+				addedPlayers = iter([p for p in bestSquadData.positionTbl[posIdx] if p.playerId not in self.inputSquadPlayers])
+				newSquadData.positionTbl[posIdx] = [p if p.playerId in playersNotTransfered else next(addedPlayers) for p in self.inputSquadData.positionTbl[posIdx]]
+			newSquadData.totalCost = bestSquadData.totalCost
+			self._writeSquadToJSON(newSquadData, outSquadJsonFn)
 
 	# Compares a list of Strategy objects (see lib/strategies.py) by running each
 	# against the SAME numTrials randomly generated starting squads (a paired
