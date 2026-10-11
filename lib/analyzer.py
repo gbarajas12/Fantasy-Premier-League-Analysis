@@ -906,6 +906,7 @@ class Analyzer:
 	def _readInCustomSquadJSON(self, squadFn, playerList):
 		playerList.clear()
 		squadValue = 0
+		bank = None
 		with open(squadFn, 'r') as f:
 			squadData = json.load(f)
 			for key, val in squadData.items():
@@ -1040,6 +1041,19 @@ class Analyzer:
 			for playerData in playerList:
 				self.inputSquadData.totalPoints += playerData.totalPoints
 				self.inputSquadData.totalCost += playerData.nowCost
+
+	# Scores the squad in squadFn (same format as the findBestTransferOptions
+	# input squad, including "bank", which is required but irrelevant here).
+	# Returns (fullSquadPoints, activeSquadPoints): the sum of all 15 players'
+	# points, and the points from the weekly squad selection (strategy and
+	# captaincy from the config file) excluding subs, as in findBestSquad's output.
+	def scoreSquad(self, squadFn):
+		self.inputSquadData = SquadData(self.numPositions)
+		self.inputSquadPlayers = set()
+		self._readInCustomSquadJSON(squadFn, list())
+		self._findCustomSquadMetadata()
+		activeSquadPoints = self._evaluateStrategy(self.statTypeForSquad, self.statTypeForCaptain, self.inputSquadData)
+		return (self.inputSquadData.totalPoints, activeSquadPoints)
 
 	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn):
 		self.squadOptimizationStat = 'total_points' # defensive: never inherit a stat left over from a prior findBestSquad call on this instance

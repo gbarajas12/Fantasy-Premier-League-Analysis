@@ -34,3 +34,6 @@ python3 -m pytest tests/ -v
   standard-named files (`lib/fpl_data_files.py`) from an FPL data directory,
   the single data argument taken by `prog/findBestTeam.py`,
   `prog/compareStrategies.py` and `prog/grab_fpl_data.py`.
+- `tests/test_score_squad.py` covers `Analyzer.scoreSquad` (behind
+  `prog/scoreSquad.py`): scoring the `2025-26/team_of_the_season.txt` squad
+  must reproduce that file's recorded point totals.
