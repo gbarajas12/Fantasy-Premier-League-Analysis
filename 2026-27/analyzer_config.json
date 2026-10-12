@@ -1,9 +1,9 @@
 {
-	"excluded_players": ["James Garner"],
+	"excluded_players": [],
 	"excluded_teams": [],
-	"required_players": ["Erling Haaland"],
+	"required_players": [],
 	"budget": 1000,
-	"season": "2025-26",
+	"season": "2026-27",
 	"num_prev_weeks_for_data": -1,
 	"gameweek_squad_strategy": "form",
 	"gameweek_captain_strategy": "form",
