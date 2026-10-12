@@ -167,7 +167,7 @@ def test_schedule_weeks_past_the_data_are_ignored_with_a_warning(capsys):
     a.lastCompletedGameWeek = 20
     _wildcard_policy([10, 30]).prepare(a)
     assert "wildcard week 30" in capsys.readouterr().out
-    assert [key[0] for key in a.bestSquadTbl] == [9]  # only the in-range week got a table
+    assert a.bestSquadTbl == {}  # tables are built when the chip is played, for that trial's money
 
 
 def test_comparison_with_a_wildcard_strategy_is_deterministic(loaded_analyzer):

@@ -51,3 +51,10 @@ python3 -m pytest tests/ -v
   per-gameweek cost file made with it; `readDataFromDir` uses it automatically, so
   the Active Squad Points recorded in `2025-26/team_of_the_season.txt` (2346) are
   the figure with those costs.
+- `tests/test_prices.py` covers compareStrategies' use of the per-gameweek cost
+  file: the price tables built from the raw cost file (not StatType.COST, which
+  `readDataFromJSON` fills with the final price wherever the file has gaps),
+  `SquadData.bank`, and `_evaluateStrategy(simulatePrices=True)`, which moves
+  `PlayerData.nowCost` through the season's prices (restored afterwards; players
+  are bought and sold at the week's price, no profit tax) and gives wildcards
+  each trial's actual money.

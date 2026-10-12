@@ -92,6 +92,10 @@ class SquadData:
 		self.totalCost = 0
 		self.totalPoints = 0 # always real total points, regardless of squadOptimizationStat
 		self.objectiveValue = 0 # sum of whatever squadOptimizationStat is being optimized (see Analyzer._getSquadObjectiveValue)
+		# money not tied up in players, in tenths of a million. Tracked for the squads
+		# compareStrategies simulates, where prices change by week; None means "the
+		# budget minus totalCost", i.e. prices never change.
+		self.bank = None
 		for i in range(numPositions):
 			self.positionTbl.append(list())
 	def copyTo(self, other):
@@ -101,6 +105,7 @@ class SquadData:
 		other.totalCost = self.totalCost
 		other.totalPoints = self.totalPoints
 		other.objectiveValue = self.objectiveValue
+		other.bank = self.bank
 
 class Analyzer:
 	def __init__(self):
@@ -136,7 +141,13 @@ class Analyzer:
 		# when set, maps playerId -> the value the DFS optimizes instead of squadOptimizationStat
 		# (see getBestSquadForWeek)
 		self.objectiveTbl = None
-		self.bestSquadTbl = dict() # cache for getBestSquadForWeek
+		self.bestSquadTbl = dict() # cache for getBestSquadForWeek: {key: [(budget built for, cost, objective value, squad)]}
+		# raw per-gameweek prices from the cost file, {playerId: {gameweek: price}}, or None
+		self.costHistoryTbl = None
+		# per-gameweek price tables for compareStrategies (see _ensurePriceTables), and
+		# the gameweek whose prices PlayerData.nowCost currently holds (None: base prices)
+		self.priceTbls = None
+		self._priceWeek = None
 		# squad input by user
 		self.inputSquadData = None
 		self.inputSquadPlayers = None  # set of all player IDs in input squad
@@ -568,36 +579,117 @@ class Analyzer:
 	# list of (playerOut, playerIn) pairs, applied to squadData in place via
 	# _applyTransfers before the next week's squad is chosen. Defaults to no-op,
 	# so every existing caller's behavior is unchanged.
-	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData, transferPolicy=None, rng=None):
+	# simulatePrices (used by compareStrategies; needs squadData.bank): run the season
+	# at its weekly prices from the cost file (see _ensurePriceTables). PlayerData.nowCost
+	# is the current price, so squads, transfer policies and wildcard searches all see
+	# the week's prices; transfers are made at the prices of the week they take effect,
+	# players are bought and sold at the current price, and the bank only changes with
+	# transfers. The base prices are restored afterwards.
+	def _evaluateStrategy(self, statTypeForSquad, statTypeForCaptain, squadData, transferPolicy=None, rng=None, simulatePrices=False):
 		if self.lastCompletedGameWeek < 1:
 			return 0 # no completed gameweeks yet (e.g. season hasn't started) - nothing to simulate
-		if self.weeklyOutFn != None:
-			fOut = open(self.weeklyOutFn,'w')
-		totalPoints = 0
-		weekSquad = list() # subset of players for current week
-		weekSubs = list() # substitutes, ordered by decreasing stat of choice
-		weekCaptain = None
-		weekViceCaptain = None
-		(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(StatType.COST, StatType.COST, 1, squadData, weekSquad, weekSubs, weekCaptain)
-		# for each week, find number of points for all players in that week's squad
-		startWeek = self._getStartWeek()
-		for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
-			weekPoints = self._getSquadPointsForGameWeek(weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain)
-			totalPoints += weekPoints
-			# choose squad for next week
+		if simulatePrices:
+			assert self._priceWeek is None, "Error: _evaluateStrategy(simulatePrices=True) can't be nested"
+			self._setPricesForWeek(self._getStartWeek())
+			squadData.totalCost = sum(playerData.nowCost for posList in squadData.positionTbl for playerData in posList)
+			squadData.bank = self.budget - squadData.totalCost
+			assert squadData.bank >= 0, "Error: the starting squad costs more than the budget at the starting prices"
+		try:
+			if self.weeklyOutFn != None:
+				fOut = open(self.weeklyOutFn,'w')
+			totalPoints = 0
+			weekSquad = list() # subset of players for current week
+			weekSubs = list() # substitutes, ordered by decreasing stat of choice
+			weekCaptain = None
+			weekViceCaptain = None
+			(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(StatType.COST, StatType.COST, 1, squadData, weekSquad, weekSubs, weekCaptain)
+			# for each week, find number of points for all players in that week's squad
+			startWeek = self._getStartWeek()
+			for weekIdx in range(startWeek, self.lastCompletedGameWeek + 1):
+				weekPoints = self._getSquadPointsForGameWeek(weekIdx, weekSquad, weekSubs, weekCaptain, weekViceCaptain)
+				totalPoints += weekPoints
+				# choose squad for next week
+				if self.weeklyOutFn is not None:
+					self._writeSquadWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut)
+				if transferPolicy is not None and weekIdx < self.lastCompletedGameWeek:
+					if simulatePrices:
+						self._setPricesForWeek(weekIdx + 1)
+						squadData.totalCost = sum(playerData.nowCost for posList in squadData.positionTbl for playerData in posList)
+					transfers = transferPolicy.selectTransfers(self, squadData, weekIdx, weekSquad, weekSubs, rng)
+					self._applyTransfers(squadData, transfers)
+				weekSquad = list()
+				weekSubs = list()
+				(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain)
+
 			if self.weeklyOutFn is not None:
-				self._writeSquadWeekPerformanceToFile(weekIdx, totalPoints, weekPoints, weekSquad, weekSubs, weekCaptain, weekViceCaptain, fOut)
-			if transferPolicy is not None and weekIdx < self.lastCompletedGameWeek:
-				transfers = transferPolicy.selectTransfers(self, squadData, weekIdx, weekSquad, weekSubs, rng)
-				self._applyTransfers(squadData, transfers)
-			weekSquad = list()
-			weekSubs = list()
-			(weekCaptain, weekViceCaptain) = self._getBestSquadByStat(statTypeForSquad, statTypeForCaptain, weekIdx, squadData, weekSquad, weekSubs, weekCaptain)
+				fOut.close()
 
-		if self.weeklyOutFn is not None:
-			fOut.close()
+			return totalPoints
+		finally:
+			if simulatePrices:
+				self._setPricesForWeek(None)
 
-		return totalPoints
+	# Builds, from the raw cost file (self.costHistoryTbl), what compareStrategies needs
+	# to move PlayerData.nowCost through the season's prices:
+	#   basePrices: {playerId: nowCost} to restore
+	#   snapshots: {gameweek: {playerId: price}} for gameweeks 1..lastCompletedGameWeek
+	#   changes: {gameweek: [(PlayerData, price)]} for the players whose price differs
+	#            from the previous gameweek's
+	# A player's price in a gameweek is his entry there, else the last earlier entry
+	# (the file has no entry in a gameweek the player has no row in, e.g. a blank
+	# gameweek), else (before his first entry) the price of his first entry, else his
+	# current price. Built from the raw file rather than StatType.COST because
+	# _getHistoricalCost fills that with the final price wherever the file has a gap.
+	# Without a cost file, prices never change (hasPriceChanges is False).
+	def _ensurePriceTables(self):
+		if self.priceTbls is not None:
+			return
+		assert self._priceWeek is None, "Error: price tables must be built while PlayerData.nowCost holds the base prices"
+		basePrices = {playerData.playerId: playerData.nowCost for playerData in self.playerNameTbl.values()}
+		snapshots = dict()
+		changes = dict()
+		prices = dict(basePrices)
+		for week in range(1, self.lastCompletedGameWeek + 1):
+			weekChanges = list()
+			for playerData in self.playerNameTbl.values():
+				playerCosts = (self.costHistoryTbl or dict()).get(playerData.playerId)
+				if playerCosts:
+					if week in playerCosts:
+						price = playerCosts[week]
+					elif week == 1:
+						price = playerCosts[min(playerCosts)]
+					else:
+						price = snapshots[week - 1][playerData.playerId]
+				else:
+					price = basePrices[playerData.playerId]
+				if week == 1 or price != snapshots[week - 1][playerData.playerId]:
+					weekChanges.append((playerData, price))
+				prices[playerData.playerId] = price
+			snapshots[week] = dict(prices)
+			changes[week] = weekChanges
+		hasPriceChanges = any(snapshot != basePrices for snapshot in snapshots.values())
+		self.priceTbls = {'basePrices': basePrices, 'snapshots': snapshots, 'changes': changes, 'hasPriceChanges': hasPriceChanges}
+
+	# Sets every PlayerData.nowCost to its price in gameweek `week` (clamped to the
+	# available gameweeks); week=None restores the base prices. A no-op when the
+	# prices never change. Moving forward exactly one gameweek only applies the changes.
+	def _setPricesForWeek(self, week):
+		self._ensurePriceTables()
+		tbls = self.priceTbls
+		if not tbls['hasPriceChanges']:
+			return
+		if week is not None:
+			week = min(max(week, 1), self.lastCompletedGameWeek)
+		if week == self._priceWeek:
+			return
+		if week is not None and self._priceWeek is not None and week == self._priceWeek + 1:
+			for playerData, price in tbls['changes'][week]:
+				playerData.nowCost = price
+		else:
+			prices = tbls['basePrices'] if week is None else tbls['snapshots'][week]
+			for playerData in self.playerNameTbl.values():
+				playerData.nowCost = prices[playerData.playerId]
+		self._priceWeek = week
 
 	# Applies a list of (playerOut, playerIn) pairs to squadData in place.
 	def _applyTransfers(self, squadData, transfers):
@@ -607,6 +699,8 @@ class Analyzer:
 			squadData.positionTbl[posIdx].append(inPlayer)
 			squadData.totalCost += inPlayer.nowCost - outPlayer.nowCost
 			squadData.totalPoints += inPlayer.totalPoints - outPlayer.totalPoints
+			if squadData.bank is not None:
+				squadData.bank += outPlayer.nowCost - inPlayer.nowCost
 
 	# Thin wrapper around the forward/backward-search fallback logic already in
 	# _getStatSortedPlayerListForWeek, for looking up a single player's stat value.
@@ -636,7 +730,8 @@ class Analyzer:
 				clubCountAfter -= 1
 			if clubCountAfter >= self.maxNumPlayersPerTeam:
 				continue
-			if squadData.totalCost - outPlayerData.nowCost + candidate.nowCost > self.budget:
+			bank = squadData.bank if squadData.bank is not None else self.budget - squadData.totalCost
+			if candidate.nowCost - outPlayerData.nowCost > bank:
 				continue
 			return candidate
 		return None
@@ -782,6 +877,7 @@ class Analyzer:
 					break
 			if ok:
 				self._topUpSquadBudget(squadData, candidatePool, rng)
+				squadData.bank = self.budget - squadData.totalCost
 				return squadData
 		assert 0, f"Could not generate a valid random squad after {maxAttempts} attempts"
 
@@ -964,6 +1060,10 @@ class Analyzer:
 		if costHistoryJsonFn is not None:
 			fCost = open(costHistoryJsonFn, 'r')
 			costHistoryData = json.load(fCost)
+		self.costHistoryTbl = None
+		if costHistoryData is not None:
+			self.costHistoryTbl = {int(playerId): {int(week): price for week, price in weekPrices.items()} for playerId, weekPrices in costHistoryData.items()}
+		self.priceTbls = None
 		self._readGameWeekDataFromJSON(topLevelData, gameweekPlayerData, gameWeekFixtureData, costHistoryData)
 		self._examineGameWeekData()
 		fTop.close()
@@ -1045,9 +1145,12 @@ class Analyzer:
 	# Runs the exhaustive search for the best squad under the current objective
 	# (self.squadOptimizationStat / self.objectiveTbl) and returns it. If outFn is
 	# given, every improved squad found is also written to it as the search goes.
-	def _searchBestSquad(self, outFn):
+	# initialBestSquad, if given, is a legal squad under the same budget and objective to
+	# start the search from: the search only replaces it with a better one, so a strong
+	# one prunes most of the search, and it is returned if nothing beats it.
+	def _searchBestSquad(self, outFn, initialBestSquad=None):
 		self._createPlayerPositionTbl()
-		bestSquadData = SquadData(self.numPositions)
+		bestSquadData = initialBestSquad if initialBestSquad is not None else SquadData(self.numPositions)
 		curSquadData = SquadData(self.numPositions)
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
 		self._seedMandatoryPlayers(curSquadData, teamCountTbl)
@@ -1084,25 +1187,41 @@ class Analyzer:
 
 	# The best squad (exhaustive search) by points over the windowSize gameweeks
 	# ending at weekIdx, as a tuple of per-position tuples of PlayerData. It
-	# depends only on the data and config, not on any trial squad, so it is
-	# computed once per (weekIdx, windowSize) and cached; used by wildcard policies.
-	# Ignores required_players (those apply to findBestSquad's starting squad).
-	def getBestSquadForWeek(self, weekIdx, windowSize):
-		key = (weekIdx, windowSize, self.budget, frozenset(self.playersToExclude), frozenset(self.teamsToExclude),
+	# depends only on the data, config, prices and money, not on any trial squad, so
+	# it is cached; used by wildcard policies. Ignores required_players (those apply
+	# to findBestSquad's starting squad).
+	# The squad is the best one costing at most `budget` (default self.budget) at the
+	# current prices (PlayerData.nowCost, which moves during compareStrategies'
+	# simulation). A squad found for budget B1 that costs c is also the best for any
+	# budget from c to B1 (everything affordable then was affordable at B1, and it is
+	# among it), so a cached search is reused across such budgets.
+	def getBestSquadForWeek(self, weekIdx, windowSize, budget=None):
+		if budget is None:
+			budget = self.budget
+		key = (weekIdx, windowSize, self._priceWeek, frozenset(self.playersToExclude), frozenset(self.teamsToExclude),
 			   self.maxNumPlayersPerTeam, tuple(self.positionCountTbl))
-		if key in self.bestSquadTbl:
-			return self.bestSquadTbl[key]
-		saved = (self.objectiveTbl, self.playerPositionTbl, self.requiredPlayerData, self.inputSquadData)
+		initialBest = None
+		for builtBudget, cost, objectiveValue, result in self.bestSquadTbl.get(key, ()):
+			if cost <= budget <= builtBudget:
+				return result
+			if cost <= budget and (initialBest is None or objectiveValue > initialBest.objectiveValue):
+				# affordable now, so a valid starting point (a lower bound) for the search
+				initialBest = SquadData(self.numPositions)
+				initialBest.positionTbl = [list(posList) for posList in result]
+				initialBest.totalCost = cost
+				initialBest.objectiveValue = objectiveValue
+		saved = (self.objectiveTbl, self.playerPositionTbl, self.requiredPlayerData, self.inputSquadData, self.budget)
 		try:
 			self.objectiveTbl = self._buildTrailingPointsObjectiveTbl(weekIdx, windowSize)
 			self.requiredPlayerData = list()
 			self.inputSquadData = None
-			bestSquadData = self._searchBestSquad(None)
+			self.budget = budget
+			bestSquadData = self._searchBestSquad(None, initialBest)
 		finally:
-			(self.objectiveTbl, self.playerPositionTbl, self.requiredPlayerData, self.inputSquadData) = saved
+			(self.objectiveTbl, self.playerPositionTbl, self.requiredPlayerData, self.inputSquadData, self.budget) = saved
 		assert sum(len(posList) for posList in bestSquadData.positionTbl) == self.fullSquadSize, f"Error: no complete squad found for week {weekIdx}, window {windowSize}"
 		result = tuple(tuple(posList) for posList in bestSquadData.positionTbl)
-		self.bestSquadTbl[key] = result
+		self.bestSquadTbl.setdefault(key, list()).append((budget, bestSquadData.totalCost, bestSquadData.objectiveValue, result))
 		return result
 
 	def _findCustomSquadMetadata(self):
@@ -1191,8 +1310,17 @@ class Analyzer:
 	# _dfsFindBestSquad/findBestTransferOptions - only cheap per-week heuristics.
 	def compareStrategies(self, strategyList, numTrials, seed=None, outFn=None):
 		rng = random.Random(seed)
-		candidatePool = self._buildRandomSquadCandidatePool()
-		randomSquads = [self._generateRandomSquad(candidatePool, rng) for i in range(numTrials)]
+		self._ensurePriceTables()
+		if self.priceTbls['hasPriceChanges']:
+			# Players are bought and sold at the week's price, with no profit tax, so
+			# owning players whose price rises is worth more here than in real FPL.
+			print("Using per-gameweek prices from the cost file")
+		try:
+			self._setPricesForWeek(self._getStartWeek()) # buy the starting squads at the starting prices
+			candidatePool = self._buildRandomSquadCandidatePool()
+			randomSquads = [self._generateRandomSquad(candidatePool, rng) for i in range(numTrials)]
+		finally:
+			self._setPricesForWeek(None)
 		resultsByStrategy = dict()
 		for strategy in strategyList:
 			strategy.squadSelector.prepare(self)
@@ -1203,7 +1331,7 @@ class Analyzer:
 				trialSquad = SquadData(self.numPositions)
 				squad.copyTo(trialSquad)  # independent mutable copy; transfers must not leak between strategies/trials
 				totalPoints = self._evaluateStrategy(statTypeForSquad, statTypeForCaptain, trialSquad,
-													  transferPolicy=strategy.transferPolicy, rng=rng)
+													  transferPolicy=strategy.transferPolicy, rng=rng, simulatePrices=True)
 				pointsList.append(totalPoints)
 			resultsByStrategy[strategy.name] = pointsList
 		if outFn is not None:

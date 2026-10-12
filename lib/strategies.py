@@ -82,6 +82,9 @@ class WorstFormTransferPolicy(TransferPolicy):
 
 	def prepare(self, analyzer):
 		analyzer._computeFormStat(self.windowSize)
+		if self._candidatePool is None:
+			# build it now, at the base prices, so its order doesn't depend on a simulated week
+			self._candidatePool = analyzer._buildRandomSquadCandidatePool()
 
 	def selectTransfers(self, analyzer, squadData, weekIdx, weekSquad, weekSubs, rng):
 		if self._candidatePool is None:
@@ -129,13 +132,13 @@ class WildcardTransferPolicy(TransferPolicy):
 		for week in sorted(self.wildcardWeeks):
 			if week - 1 < analyzer._getStartWeek() or week > analyzer.lastCompletedGameWeek:
 				print(f"WARNING: wildcard week {week} is outside the available data (gameweeks {analyzer._getStartWeek()+1}-{analyzer.lastCompletedGameWeek}), so it will never be played")
-			else:
-				analyzer.getBestSquadForWeek(week - 1, self.windowSize) # build/cache now rather than mid-trial
 
 	def selectTransfers(self, analyzer, squadData, weekIdx, weekSquad, weekSubs, rng):
 		if weekIdx + 1 not in self.wildcardWeeks:
 			return self.baseTransferPolicy.selectTransfers(analyzer, squadData, weekIdx, weekSquad, weekSubs, rng)
-		targetSquad = analyzer.getBestSquadForWeek(weekIdx, self.windowSize)
+		# the best squad the trial's money buys: its bank plus the value of its squad at the current prices
+		bank = squadData.bank if squadData.bank is not None else analyzer.budget - squadData.totalCost
+		targetSquad = analyzer.getBestSquadForWeek(weekIdx, self.windowSize, squadData.totalCost + bank)
 		transfers = []
 		for posIdx, targetPlayers in enumerate(targetSquad):
 			currentPlayers = squadData.positionTbl[posIdx]
@@ -174,7 +177,9 @@ TRANSFER_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
 # squad_transfer_form_<N>w plus a wildcard. Use windows that are also in
 # SQUAD_FORM_WINDOWS to have the matching no-wildcard strategy to compare to.
 WILDCARD_WINDOWS = [10]
-WILDCARD_SCHEDULES = [[10, 30]]
+WILDCARD_SCHEDULES = []
+for i in range(2, 19):
+	WILDCARD_SCHEDULES.append([i, i + 19])
 
 
 def buildDefaultStrategies():
