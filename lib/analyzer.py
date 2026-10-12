@@ -1341,11 +1341,16 @@ class Analyzer:
 			self._writeStrategyComparisonToFile(resultsByStrategy, outFn)
 		return resultsByStrategy
 
+	# [(strategyName, pointsList)] from compareStrategies' results, by decreasing mean
+	# points (strategies with equal means stay in their original order).
+	def sortStrategyResultsByMeanPoints(self, resultsByStrategy):
+		return sorted(resultsByStrategy.items(), key=lambda item: sum(item[1]) / len(item[1]), reverse=True)
+
 	def _writeStrategyComparisonToFile(self, resultsByStrategy, outFn):
 		import statistics
 		with open(outFn, 'w') as fOut:
 			fOut.write("Strategy\tNumTrials\tMeanPoints\tStdevPoints\tMinPoints\tMaxPoints\n")
-			for name, pointsList in resultsByStrategy.items():
+			for name, pointsList in self.sortStrategyResultsByMeanPoints(resultsByStrategy):
 				mean = statistics.mean(pointsList)
 				stdev = statistics.stdev(pointsList) if len(pointsList) > 1 else 0.0
 				fOut.write("%s\t%d\t%.1f\t%.1f\t%d\t%d\n" %

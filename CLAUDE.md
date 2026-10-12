@@ -58,3 +58,7 @@ python3 -m pytest tests/ -v
   `PlayerData.nowCost` through the season's prices (restored afterwards; players
   are bought and sold at the week's price, no profit tax) and gives wildcards
   each trial's actual money.
+- `tests/test_wildcard_strategy_sweep.py` only checks that the long strategy list in
+  `prog/compareWildcardStrategySweep.py` (run separately, hundreds of strategies; its
+  settings are at the top of that script) builds, and that the default list in
+  `lib/strategies.py` stays small.

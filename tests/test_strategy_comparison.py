@@ -141,3 +141,24 @@ def test_worst_form_transfer_strategy_changes_the_squad(loaded_analyzer):
 
     finalIds = {playerData.playerId for posList in trialSquad.positionTbl for playerData in posList}
     assert finalIds != originalIds
+
+
+def test_results_are_written_by_decreasing_mean_points(tmp_path):
+    a = analyzer.Analyzer()
+    results = {"low": [1, 2, 3], "tie_first": [5, 5], "high": [9, 8], "tie_second": [4, 6]}
+    outFn = tmp_path / "out.txt"
+    a._writeStrategyComparisonToFile(results, str(outFn))
+    names = [line.split("\t")[0] for line in outFn.read_text().splitlines()[1:]]
+    assert names == ["high", "tie_first", "tie_second", "low"]  # equal means keep their original order
+    assert [name for name, _ in a.sortStrategyResultsByMeanPoints(results)] == names
+
+
+def test_compare_strategies_writes_its_file_sorted(loaded_analyzer, tmp_path):
+    outFn = tmp_path / "out.txt"
+    selector = strategies.FixedStatSquadSelector(analyzer.StatType.TOTAL_POINTS)
+    strategyList = [strategies.Strategy("baseline", selector, strategies.NoTransferPolicy()),
+                    strategies.Strategy("transfer_5w", selector, strategies.WorstFormTransferPolicy(5)),
+                    strategies.Strategy("transfer_10w", selector, strategies.WorstFormTransferPolicy(10))]
+    loaded_analyzer.compareStrategies(strategyList, numTrials=3, seed=1, outFn=str(outFn))
+    means = [float(line.split("\t")[2]) for line in outFn.read_text().splitlines()[1:]]
+    assert len(means) > 1 and means == sorted(means, reverse=True)

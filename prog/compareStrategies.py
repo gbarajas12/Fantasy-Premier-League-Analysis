@@ -20,5 +20,5 @@ if __name__ == '__main__':
 		analyzer.readConfigFile(args.configFile)
 	analyzer.readDataFromDir(args.fplDataDir)
 	results = analyzer.compareStrategies(strategies.buildDefaultStrategies(), args.numTrials, seed=args.seed, outFn=args.outputFile)
-	for name, pointsList in results.items():
+	for name, pointsList in analyzer.sortStrategyResultsByMeanPoints(results):
 		print("%s: mean=%.1f n=%d" % (name, sum(pointsList) / len(pointsList), len(pointsList)))

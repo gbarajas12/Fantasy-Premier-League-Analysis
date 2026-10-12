@@ -161,56 +161,59 @@ class Strategy:
 		self.transferPolicy = transferPolicy
 
 
-# Squad-selection form windows to compare, in gameweeks. Each gets its own
-# strategy: pick the squad by highest points over the trailing N weeks, never
-# transfer. Add/remove numbers here to change what compareStrategies() runs.
-SQUAD_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
-
-# Transfer-policy form windows to compare, in gameweeks. Each gets its own
-# strategy: keep the baseline (total-points) squad selection, but sell the
-# worst-FORM player each week using a trailing N-week window.
-TRANSFER_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
-
-
-# Wildcard comparisons: each schedule (the gameweeks the chip is played in, at
-# most one per half-season) is paired with each window, giving the strategy
-# squad_transfer_form_<N>w plus a wildcard. Use windows that are also in
-# SQUAD_FORM_WINDOWS to have the matching no-wildcard strategy to compare to.
-WILDCARD_WINDOWS = [10]
-WILDCARD_SCHEDULES = []
-for i in range(2, 19):
-	WILDCARD_SCHEDULES.append([i, i + 19])
-
-
-def buildDefaultStrategies():
+# Builds the strategies to compare from lists of settings (see the constants below,
+# and prog/compareWildcardStrategySweep.py for a much longer list):
+#   baseline: total-points squad selection, no transfers - everything else is
+#     compared against this.
+#   squad_form_<N>w: pick the squad by highest points over the trailing N weeks,
+#     never transfer.
+#   transfer_form_<N>w: baseline squad selection, but sell the worst-FORM player
+#     each week using a trailing N-week window.
+#   squad_transfer_form_<N>w: both of the above with the same window.
+#   squad_transfer_form_<N>w_wc<a>_<b>: that, plus a wildcard played in gameweeks a
+#     and b (see WildcardTransferPolicy: at most one per half-season). Use windows
+#     that are also in squadFormWindows to have the matching no-wildcard strategy
+#     to compare to.
+def buildStrategies(squadFormWindows, transferFormWindows, wildcardWindows, wildcardSchedules):
 	strategies = [
-		# No squad-selection or transfer policy beyond the simplest possible
-		# choice - everything else is compared against this.
 		Strategy("baseline", FixedStatSquadSelector(StatType.TOTAL_POINTS), NoTransferPolicy()),
 	]
-	for windowSize in SQUAD_FORM_WINDOWS:
+	for windowSize in squadFormWindows:
 		strategies.append(Strategy(
 			f"squad_form_{windowSize}w",
 			WindowedFormSquadSelector(windowSize=windowSize),
 			NoTransferPolicy(),
 		))
-	for windowSize in TRANSFER_FORM_WINDOWS:
+	for windowSize in transferFormWindows:
 		strategies.append(Strategy(
 			f"transfer_form_{windowSize}w",
 			FixedStatSquadSelector(StatType.TOTAL_POINTS),
 			WorstFormTransferPolicy(windowSize=windowSize),
 		))
-	for windowSize in SQUAD_FORM_WINDOWS:
+	for windowSize in squadFormWindows:
 		strategies.append(Strategy(
 			f"squad_transfer_form_{windowSize}w",
 			WindowedFormSquadSelector(windowSize=windowSize),
 			WorstFormTransferPolicy(windowSize=windowSize),
 		))
-	for windowSize in WILDCARD_WINDOWS:
-		for schedule in WILDCARD_SCHEDULES:
+	for windowSize in wildcardWindows:
+		for schedule in wildcardSchedules:
 			strategies.append(Strategy(
 				f"squad_transfer_form_{windowSize}w_wc{'_'.join(str(week) for week in schedule)}",
 				WindowedFormSquadSelector(windowSize=windowSize),
 				WildcardTransferPolicy(WorstFormTransferPolicy(windowSize=windowSize), schedule, windowSize),
 			))
 	return strategies
+
+
+# The default, small, representative set that compareStrategies.py runs. Edit
+# these (windows in gameweeks; a schedule is the gameweeks the wildcard is played
+# in) to change it. The long list lives in prog/compareWildcardStrategySweep.py.
+SQUAD_FORM_WINDOWS = [3, 5, 10]
+TRANSFER_FORM_WINDOWS = [3, 5, 10]
+WILDCARD_WINDOWS = [10]
+WILDCARD_SCHEDULES = [[10, 30]]
+
+
+def buildDefaultStrategies():
+	return buildStrategies(SQUAD_FORM_WINDOWS, TRANSFER_FORM_WINDOWS, WILDCARD_WINDOWS, WILDCARD_SCHEDULES)
