@@ -43,3 +43,11 @@ python3 -m pytest tests/ -v
 - `tests/test_wildcard.py` covers the wildcard chip: `Analyzer.getBestSquadForWeek`
   (the cached exhaustive best-squad table by trailing-N-week points) and
   `strategies.WildcardTransferPolicy`.
+- `tests/test_vaastav_data.py` covers `vaastav_data.readGameweekCosts` (behind
+  `prog/costDataFromVaastav.py`), which builds the per-gameweek cost file from a
+  season directory of the vaastav/Fantasy-Premier-League repo. Uses a tiny
+  hand-made gws/ directory; the real clone is untracked.
+  `tests/fixtures/season_2025_26/fpl_gameweek_cost_data.json` is the real 2025-26
+  per-gameweek cost file made with it; `readDataFromDir` uses it automatically, so
+  the Active Squad Points recorded in `2025-26/team_of_the_season.txt` (2346) are
+  the figure with those costs.

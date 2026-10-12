@@ -30,5 +30,5 @@ Full Squad Points: 2727
 
 # Sum of squad points, excluding subs. Calculated by selecting
 # a squad each gameweek based on form, including captain.
-Active Squad Points: 2345
+Active Squad Points: 2346
 
