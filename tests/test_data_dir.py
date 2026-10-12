@@ -57,3 +57,15 @@ def test_missing_required_file_gives_clear_error(tmp_path):
     except AssertionError as e:
         assert fpl_data_files.GAMEWEEK_PLAYER_FN in str(e)
         assert str(dataDir) in str(e)
+
+
+def test_warns_when_the_cost_file_is_missing(tmp_path, capsys):
+    dataDir = _make_data_dir(tmp_path)
+    analyzer.Analyzer().readDataFromDir(str(dataDir))
+    out = capsys.readouterr().out
+    assert "WARNING" in out and fpl_data_files.GAMEWEEK_COST_FN in out and str(dataDir) in out
+
+
+def test_no_cost_file_warning_when_it_is_present(tmp_path, capsys):
+    analyzer.Analyzer().readDataFromDir(str(_make_data_dir(tmp_path, includeCost=True)))
+    assert fpl_data_files.GAMEWEEK_COST_FN not in capsys.readouterr().out

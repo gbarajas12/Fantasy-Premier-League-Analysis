@@ -1074,13 +1074,16 @@ class Analyzer:
 
 	# Reads the standard-named files (see fpl_data_files.py) out of dataDir, as
 	# written by grab_fpl_data.py. The per-gameweek cost file is optional: it is
-	# used if present, otherwise cost falls back to each player's current price.
+	# used if present, otherwise (with a warning) cost falls back to each player's
+	# current price.
 	def readDataFromDir(self, dataDir):
 		def path(fn):
 			return os.path.join(dataDir, fn)
 		for fn in (fpl_data_files.TOP_LEVEL_FN, fpl_data_files.GAMEWEEK_PLAYER_FN, fpl_data_files.GAMEWEEK_FIXTURE_FN):
 			assert os.path.isfile(path(fn)), f"Error: {fn} not found in FPL data directory {dataDir}. Run grab_fpl_data.py to generate it."
 		costFn = path(fpl_data_files.GAMEWEEK_COST_FN)
+		if not os.path.isfile(costFn):
+			print(f"WARNING: {fpl_data_files.GAMEWEEK_COST_FN} not found in FPL data directory {dataDir}, so every player is priced at his current price in every gameweek. Create it with grab_fpl_data.py --grabCost, or costDataFromVaastav.py for a past season.")
 		self.readDataFromJSON(path(fpl_data_files.TOP_LEVEL_FN), path(fpl_data_files.GAMEWEEK_PLAYER_FN),
 							  path(fpl_data_files.GAMEWEEK_FIXTURE_FN), costFn if os.path.isfile(costFn) else None)
 
