@@ -1,11 +1,14 @@
 """Tests for the required_players config option (Analyzer._resolveRequiredPlayers /
 Analyzer._seedMandatoryPlayers), which forces findBestSquad's DFS to include a
-specific set of players in the final squad.
+specific set of players in the final squad. findBestTransferOptions uses the
+same two calls, so required_players also forces a player to survive the
+transfer search even if transferring them out would otherwise score higher.
 
 Fully synthetic, same style as tests/test_squad_optimization_stat.py: constructs
 PlayerData objects by hand and shrinks the squad shape to 1 player per position,
 so the DFS search space is small enough to trace and verify by hand.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -116,3 +119,35 @@ def test_required_players_leaving_insufficient_budget_for_rest_rejected(tmp_path
     a.requiredPlayers = {GK_A}
     outFn = tmp_path / "out.txt"
     _assert_raises(lambda: a.findBestSquad(str(outFn)), "cheapest possible remaining squad")
+
+
+def test_required_player_survives_transfer_search(tmp_path):
+    # Owns PlayerB at GK. Budget (95 = 25+20+20+20 squad value + 10 bank) is
+    # exactly enough to also afford switching to PlayerA, who scores higher -
+    # without required_players the transfer search would make that swap.
+    a = _build_analyzer()
+    a.requiredPlayers = {GK_B}
+    squadFn = tmp_path / "input_squad.json"
+    squadFn.write_text(json.dumps({"keepers": [GK_B], "defenders": [DEF_C],
+                                    "midfielders": [MID_D], "forwards": [FWD_E], "bank": 1.0}))
+    outFn = tmp_path / "transfers.txt"
+    a.findBestTransferOptions(str(squadFn), 1, str(outFn))
+
+    content = outFn.read_text()
+    assert "Players Out:\n\n" in content  # nothing transferred out - GK_B stays required
+
+
+def test_no_required_players_leaves_transfer_search_unaffected(tmp_path):
+    # Same setup with no required_players: the transfer search is free to
+    # swap in the objectively-better PlayerA, proving the prior test's "stays
+    # put" result comes from required_players and not from the search simply
+    # not wanting to transfer.
+    a = _build_analyzer()
+    squadFn = tmp_path / "input_squad.json"
+    squadFn.write_text(json.dumps({"keepers": [GK_B], "defenders": [DEF_C],
+                                    "midfielders": [MID_D], "forwards": [FWD_E], "bank": 1.0}))
+    outFn = tmp_path / "transfers.txt"
+    a.findBestTransferOptions(str(squadFn), 1, str(outFn))
+
+    content = outFn.read_text()
+    assert "Players In:\nPlayerA Alpha" in content

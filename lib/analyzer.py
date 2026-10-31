@@ -1280,12 +1280,14 @@ class Analyzer:
 		# find metadata of squad
 		self._findCustomSquadMetadata()
 		print("Budget: %.1fm euros" % (self.budget/10.0))
+		self._resolveRequiredPlayers()
 		self._createPlayerPositionTbl()
 		# find best team given the max transfers allowed
 		bestSquadData = SquadData(self.numPositions)
 		self.inputSquadData.copyTo(bestSquadData)
 		curSquadData = SquadData(self.numPositions)
 		teamCountTbl = [0]*(len(self.teamIdTbl)+1) # map from team id to count of players for that team
+		self._seedMandatoryPlayers(curSquadData, teamCountTbl) # forces config's required_players into the result, same as findBestSquad
 		positionIdxList = [0, 0, 0, 0] # each element is the current idx within the full player list of the position given by that element
 		numConsecutiveBadSearches = [0]
 		self._dfsFindBestSquad(teamCountTbl, positionIdxList, bestSquadData, curSquadData, numConsecutiveBadSearches, 0, outFn)

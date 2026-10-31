@@ -34,7 +34,10 @@ python3 -m pytest tests/ -v
 - `tests/test_required_players.py` covers the `required_players` config key,
   which forces `Analyzer.findBestSquad`'s DFS to include specific players in
   the final squad (`Analyzer._resolveRequiredPlayers` /
-  `Analyzer._seedMandatoryPlayers`). Fully synthetic.
+  `Analyzer._seedMandatoryPlayers`), and that `Analyzer.findBestTransferOptions`
+  uses the same two calls so a required player survives the transfer search
+  even when transferring them out would otherwise score higher. Fully
+  synthetic.
 - `tests/test_data_dir.py` covers `Analyzer.readDataFromDir`, which reads the
   standard-named files (`lib/fpl_data_files.py`) from an FPL data directory,
   the single data argument taken by `prog/findBestTeam.py`,
