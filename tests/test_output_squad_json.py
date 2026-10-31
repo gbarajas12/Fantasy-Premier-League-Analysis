@@ -73,7 +73,7 @@ def test_transfers_json_is_input_squad_with_transfers_applied(tmp_path):
     squadJsonFn = tmp_path / "after.json"
     # budget becomes 25+20+20+20 + 10 bank = 95, exactly enough to swap PlayerB for PlayerA
     a.findBestTransferOptions(str(_write_input_squad(tmp_path, "PlayerB", 1.0)), 1,
-                              str(tmp_path / "transfers.txt"), str(squadJsonFn))
+                              str(tmp_path / "transfers.txt"), outSquadJsonFn=str(squadJsonFn))
     assert json.loads(squadJsonFn.read_text()) == {
         "keepers": ["PlayerA X"], "defenders": ["PlayerC X"],
         "midfielders": ["PlayerD X"], "forwards": ["PlayerE X"], "bank": 0.0}
@@ -83,7 +83,7 @@ def test_transfers_json_without_transfers_is_the_input_squad(tmp_path):
     a = _build_small_analyzer()
     squadJsonFn = tmp_path / "after.json"
     a.findBestTransferOptions(str(_write_input_squad(tmp_path, "PlayerB", 1.0)), 0,
-                              str(tmp_path / "transfers.txt"), str(squadJsonFn))
+                              str(tmp_path / "transfers.txt"), outSquadJsonFn=str(squadJsonFn))
     assert json.loads(squadJsonFn.read_text()) == {
         "keepers": ["PlayerB X"], "defenders": ["PlayerC X"],
         "midfielders": ["PlayerD X"], "forwards": ["PlayerE X"], "bank": 1.0}

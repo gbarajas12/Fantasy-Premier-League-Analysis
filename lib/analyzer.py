@@ -1247,8 +1247,9 @@ class Analyzer:
 		activeSquadPoints = self._evaluateStrategy(self.statTypeForSquad, self.statTypeForCaptain, self.inputSquadData)
 		return (self.inputSquadData.totalPoints, activeSquadPoints)
 
-	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn, outSquadJsonFn=None):
-		self.squadOptimizationStat = 'total_points' # defensive: never inherit a stat left over from a prior findBestSquad call on this instance
+	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn, squadStat='total_points', outSquadJsonFn=None):
+		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
+		self.squadOptimizationStat = squadStat # also defensive: never inherit a stat left over from a prior findBestSquad call on this instance
 		self.inputSquadData = SquadData(self.numPositions)
 		self.inputSquadPlayers = set()
 		self.maxNumTransfers = maxNumTransfers
