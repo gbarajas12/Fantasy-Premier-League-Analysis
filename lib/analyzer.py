@@ -762,17 +762,36 @@ class Analyzer:
 			assert self.teamIdTbl[playerData.teamId].name not in self.teamsToExclude, f"Error: {name}'s team is in excluded_teams, but {name} is also required."
 			self.requiredPlayerData.append(playerData)
 
+	# True if playerData played (nonzero minutes) in at least half of the
+	# gameweeks from week 1 up to self.lastCompletedGameWeek ("the gameweek of
+	# interest" - the current point findBestSquad/findBestTransferOptions are
+	# evaluating from). A missing gameWeekTbl entry counts as not played (0
+	# minutes). Used to keep a handful of explosive matches from outscoring a
+	# reliable starter under points_per_match (see _buildFilteredPlayerPositionLists).
+	def _hasPlayedEnoughGamesForPointsPerMatch(self, playerData):
+		gamesPlayed = sum(1 for weekIdx in range(1, self.lastCompletedGameWeek + 1)
+						  if weekIdx in playerData.gameWeekTbl and playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] > 0)
+		return gamesPlayed * 2 >= self.lastCompletedGameWeek
+
 	# Returns a fresh list of per-position player lists passing the exclusion
-	# filters (excluded_players/excluded_teams, must have scored this season
-	# unless in curSquadPlayerIds). No dominance pruning, no sorting: reused
-	# unpruned by the random squad generator, which doesn't need the search-space
-	# reduction that _createPlayerPositionTbl's pruning below provides, and
-	# shouldn't lose cheap differentials to it.
+	# filters (excluded_players/excluded_teams, must have scored this season,
+	# and - under points_per_match - must have played at least half the
+	# season's gameweeks; all unless in curSquadPlayerIds). No dominance
+	# pruning, no sorting: reused unpruned by the random squad generator,
+	# which doesn't need the search-space reduction that
+	# _createPlayerPositionTbl's pruning below provides, and shouldn't lose
+	# cheap differentials to it.
 	def _buildFilteredPlayerPositionLists(self, curSquadPlayerIds):
 		positionLists = [list() for i in range(len(self.positionIdTbl))]
+		# self.objectiveTbl overrides squadOptimizationStat entirely (see
+		# _getSquadObjectiveValue - used by getBestSquadForWeek), so the games-played
+		# filter below must sit out whenever it's set, same as that method does.
+		checkGamesPlayed = self.objectiveTbl is None and self.squadOptimizationStat == 'points_per_match'
 		for name,playerData in self.playerNameTbl.items():
 			# skip players with no points
 			if playerData.totalPoints <= 0 and playerData.playerId not in curSquadPlayerIds:
+				continue
+			if checkGamesPlayed and playerData.playerId not in curSquadPlayerIds and not self._hasPlayedEnoughGamesForPointsPerMatch(playerData):
 				continue
 			# NOTE: the following exclusion reasons supercede keeping players on the current squad
 			if playerData.name in self.playersToExclude:

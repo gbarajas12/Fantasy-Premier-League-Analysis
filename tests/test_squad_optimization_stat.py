@@ -114,3 +114,68 @@ def test_invalid_squad_stat_rejected(tmp_path):
         assert False, "expected an AssertionError for an unknown squadStat"
     except AssertionError as e:
         assert "not_a_real_stat" in str(e)
+
+
+GK_REGULAR, GK_FLASH = "PlayerF Foxtrot", "PlayerG Golf"
+
+
+def _build_analyzer_with_a_small_sample_gk():
+    # 4-gameweek season. GK_FLASH has a higher points-per-match than GK_REGULAR,
+    # but only played 1 of the 4 weeks (0 minutes - i.e. no gameWeekTbl entry at
+    # all - the other 3), so it's fewer than half: should be excluded from
+    # points_per_match optimization entirely, regardless of its ppm value.
+    a = analyzer.Analyzer()
+    a.teamIdTbl = {1: analyzer.TeamData("Team One", 1), 2: analyzer.TeamData("Team Two", 2)}
+    a.budget = 100
+    a.positionCountTbl = [1, 1, 1, 1]
+    a.minPositionCountTbl = [1, 1, 1, 1]
+    a.maxPositionCountTbl = [1, 1, 1, 1]
+    a.startingSquadSize = 4
+    a.fullSquadSize = 4
+    a.lastCompletedGameWeek = 4
+
+    def addPlayer(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch, weeksPlayed):
+        playerData = analyzer.PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch)
+        for weekIdx, weekPoints in weeksPlayed:
+            playerData.updateGameWeekTbl(weekIdx, weekPoints, nowCost, minutesPlayed=90)
+        a.playerNameTbl[playerData.name] = playerData
+
+    addPlayer("PlayerF", "Foxtrot", 106, totalPoints=20, nowCost=20, teamId=1, positionId=1,
+              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5), (3, 5), (4, 5)])
+    addPlayer("PlayerG", "Golf", 107, totalPoints=12, nowCost=15, teamId=1, positionId=1,
+              pointsPerMatch=12.0, weeksPlayed=[(1, 12)])
+    # DEF/MID/FWD are sole candidates, each played exactly half the season (2 of
+    # 4 weeks) - just enough to survive the games-played filter too.
+    addPlayer("PlayerC", "Gamma", 103, totalPoints=10, nowCost=20, teamId=1, positionId=2,
+              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
+    addPlayer("PlayerD", "Delta", 104, totalPoints=10, nowCost=20, teamId=2, positionId=3,
+              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
+    addPlayer("PlayerE", "Epsilon", 105, totalPoints=10, nowCost=20, teamId=2, positionId=4,
+              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
+
+    return a
+
+
+def test_points_per_match_excludes_players_who_played_fewer_than_half_the_games(tmp_path):
+    a = _build_analyzer_with_a_small_sample_gk()
+    outFn = tmp_path / "out_ppm_small_sample.txt"
+    a.findBestSquad(str(outFn), squadStat='points_per_match')
+
+    # GK_FLASH's higher ppm never even gets to compete - it's filtered out before
+    # dominance pruning or the DFS see it.
+    assert len(a.playerPositionTbl[0]) == 1
+    assert a.playerPositionTbl[0][0].name == GK_REGULAR
+
+    content = outFn.read_text()
+    assert GK_REGULAR in content
+    assert GK_FLASH not in content
+
+
+def test_total_points_keeps_players_with_few_games(tmp_path):
+    # the games-played filter only applies under points_per_match - total_points
+    # optimization must still be able to pick GK_FLASH.
+    a = _build_analyzer_with_a_small_sample_gk()
+    outFn = tmp_path / "out_total_points_small_sample.txt"
+    a.findBestSquad(str(outFn), squadStat='total_points')
+
+    assert len(a.playerPositionTbl[0]) == 2
