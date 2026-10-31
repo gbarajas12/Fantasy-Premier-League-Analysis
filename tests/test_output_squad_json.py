@@ -90,12 +90,12 @@ def test_transfers_json_without_transfers_is_the_input_squad(tmp_path):
 
 
 def test_no_complete_squad_gives_clear_error_instead_of_empty_json(tmp_path):
-    # every synthetic player has points_per_match 0.0, so all squads tie at 0 and none
-    # strictly beats the empty starting squad - findBestSquad finds nothing to write
+    # every synthetic player has average_points_per_match 0.0, so all squads tie at 0
+    # and none strictly beats the empty starting squad - findBestSquad finds nothing to write
     a = _build_small_analyzer()
     squadJsonFn = tmp_path / "squad.json"
     try:
-        a.findBestSquad(str(tmp_path / "best.txt"), squadStat='points_per_match', outSquadJsonFn=str(squadJsonFn))
+        a.findBestSquad(str(tmp_path / "best.txt"), squadStat='average_points_per_match', outSquadJsonFn=str(squadJsonFn))
         assert False, "expected an AssertionError"
     except AssertionError as e:
         assert "no complete squad" in str(e)

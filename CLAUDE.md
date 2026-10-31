@@ -22,15 +22,18 @@ python3 -m pytest tests/ -v
   per-gameweek price history for the current in-progress season, so this
   can't be tested against real 2025-26 data.
 - `tests/test_squad_optimization_stat.py` covers `Analyzer.findBestSquad`'s
-  `squadStat` param (`'total_points'` default, or `'points_per_match'` using
-  FPL's `points_per_game` field), and `points_per_match`'s games-played filter
-  (`Analyzer._hasPlayedEnoughGamesForPointsPerMatch`): a player with 0 minutes
-  in more than half the gameweeks up to `lastCompletedGameWeek` is excluded
-  from `points_per_match` optimization entirely, regardless of its
-  points-per-match value, so a small sample of big matches can't outscore a
-  reliable starter. Fully synthetic - real 2025-26 `points_per_game` data
-  isn't reliably recoverable from any archived pull on disk (checked:
-  stale/mismatched vs. the test fixtures).
+  `squadStat` param: `'total_points'` (default), `'average_points_per_match'`
+  (FPL's `points_per_game` field), or `'median_points_per_match'` (median of
+  `StatType.WEEK_POINTS` over the gameweeks a player played - not provided by
+  the FPL API, so computed and cached by
+  `Analyzer._getMedianPointsPerMatch`). Also covers the two per-match stats'
+  shared games-played filter (`Analyzer._hasPlayedEnoughGamesForPerMatchStat`):
+  a player with 0 minutes in more than half the gameweeks up to
+  `lastCompletedGameWeek` is excluded from either per-match optimization
+  entirely, regardless of its points-per-match value, so a small sample of
+  big matches can't outscore a reliable starter. Fully synthetic - real
+  2025-26 `points_per_game` data isn't reliably recoverable from any archived
+  pull on disk (checked: stale/mismatched vs. the test fixtures).
 - `tests/test_required_players.py` covers the `required_players` config key,
   which forces `Analyzer.findBestSquad`'s DFS to include specific players in
   the final squad (`Analyzer._resolveRequiredPlayers` /

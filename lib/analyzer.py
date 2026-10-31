@@ -7,6 +7,12 @@ import fpl_data_files
 from sklearn import linear_model
 import matplotlib.pyplot as plt
 
+VALID_SQUAD_OPTIMIZATION_STATS = ('total_points', 'average_points_per_match', 'median_points_per_match')
+# squadOptimizationStat values that score a player on a per-match basis rather
+# than a season total, and so are vulnerable to a small sample of matches
+# outscoring a reliable starter (see Analyzer._hasPlayedEnoughGamesForPerMatchStat).
+PER_MATCH_SQUAD_OPTIMIZATION_STATS = ('average_points_per_match', 'median_points_per_match')
+
 class StatType(Enum):
 	COST           = 0
 	WEEK_POINTS    = 1
@@ -31,7 +37,7 @@ class PlayerGameWeekData:
 
 
 class PlayerData:
-	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch=0.0):
+	def __init__(self, firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch=0.0):
 		self.name = '%s %s' % (firstName, lastName)
 		self.firstName = firstName
 		self.lastName = lastName
@@ -40,10 +46,10 @@ class PlayerData:
 		self.nowCost = nowCost
 		self.teamId = teamId
 		self.positionId = positionId
-		self.pointsPerMatch = pointsPerMatch
+		self.averagePointsPerMatch = averagePointsPerMatch
 		self.gameWeekTbl = dict() # map from game week idx to PlayerGameWeekData
 	def copyTo(self, other):
-		other = PlayerData(self.firstName, self.lastName, self.playerId, self.totalPoints, self.nowCost, self.teamId, self.positionId, self.pointsPerMatch)
+		other = PlayerData(self.firstName, self.lastName, self.playerId, self.totalPoints, self.nowCost, self.teamId, self.positionId, self.averagePointsPerMatch)
 		other.gameWeekTbl[:] = self.gameWeekTbl.copy()
 	# Updates the entry for the week (this could happen for double gameWeek).
 	def updateGameWeekTbl(self, weekIdx, weekPoints, weekCost, minutesPlayed):
@@ -136,11 +142,15 @@ class Analyzer:
 		# stats to use when finding each best gameweek squad (after finding best squad in general)
 		self.statTypeForSquad = StatType.FORM
 		self.statTypeForCaptain = StatType.FORM
-		# which PlayerData stat findBestSquad's DFS optimizes for: 'total_points' or 'points_per_match'
+		# which PlayerData stat findBestSquad's DFS optimizes for - one of VALID_SQUAD_OPTIMIZATION_STATS
 		self.squadOptimizationStat = 'total_points'
 		# when set, maps playerId -> the value the DFS optimizes instead of squadOptimizationStat
 		# (see getBestSquadForWeek)
 		self.objectiveTbl = None
+		# cache for _getMedianPointsPerMatch: {playerId: median}. Cleared whenever
+		# squadOptimizationStat is (re)set, since lastCompletedGameWeek - which the
+		# median is computed over - can only change between such calls.
+		self._medianPointsPerMatchCache = dict()
 		self.bestSquadTbl = dict() # cache for getBestSquadForWeek: {key: [(budget built for, cost, objective value, squad)]}
 		# raw per-gameweek prices from the cost file, {playerId: {gameweek: price}}, or None
 		self.costHistoryTbl = None
@@ -269,8 +279,8 @@ class Analyzer:
 			nowCost = playerData['now_cost']
 			teamId = playerData['team']
 			positionId = playerData['element_type']
-			pointsPerMatch = float(playerData['points_per_game'])
-			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch)
+			averagePointsPerMatch = float(playerData['points_per_game'])
+			self.playerNameTbl['%s %s' % (firstName, lastName)] = PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch)
 
 	# Looks up a player's cost for a specific gameweek from costHistoryData (as
 	# loaded from a fpl_gameweek_cost_data.json produced by grab_fpl_data.py).
@@ -742,9 +752,34 @@ class Analyzer:
 		tbl = self.objectiveTbl
 		if tbl is not None:
 			return tbl[playerData.playerId]
-		if self.squadOptimizationStat == 'points_per_match':
-			return playerData.pointsPerMatch
+		if self.squadOptimizationStat == 'average_points_per_match':
+			return playerData.averagePointsPerMatch
+		if self.squadOptimizationStat == 'median_points_per_match':
+			return self._getMedianPointsPerMatch(playerData)
 		return playerData.totalPoints
+
+	# Median of playerData's WEEK_POINTS over the gameweeks (1..lastCompletedGameWeek)
+	# it played (nonzero minutes) - the median_points_per_match counterpart to
+	# averagePointsPerMatch (which FPL provides directly as points_per_game, a
+	# mean). Not provided by the FPL API, so computed here and cached per player
+	# (see self._medianPointsPerMatchCache), since _getSquadObjectiveValue calls
+	# this from the DFS's hot path.
+	def _getMedianPointsPerMatch(self, playerData):
+		cache = self._medianPointsPerMatchCache
+		median = cache.get(playerData.playerId)
+		if median is not None:
+			return median
+		weekPointsList = sorted(gwData.statTbl[StatType.WEEK_POINTS] for weekIdx, gwData in playerData.gameWeekTbl.items()
+								 if weekIdx <= self.lastCompletedGameWeek and gwData.statTbl[StatType.MINUTES_PLAYED] > 0)
+		n = len(weekPointsList)
+		if n == 0:
+			median = 0.0
+		elif n % 2 == 1:
+			median = float(weekPointsList[n // 2])
+		else:
+			median = (weekPointsList[n // 2 - 1] + weekPointsList[n // 2]) / 2.0
+		cache[playerData.playerId] = median
+		return median
 
 	# Resolves self.requiredPlayers (names, from config) into self.requiredPlayerData
 	# (PlayerData objects), for findBestSquad's DFS to force-include (see
@@ -767,18 +802,19 @@ class Analyzer:
 	# interest" - the current point findBestSquad/findBestTransferOptions are
 	# evaluating from). A missing gameWeekTbl entry counts as not played (0
 	# minutes). Used to keep a handful of explosive matches from outscoring a
-	# reliable starter under points_per_match (see _buildFilteredPlayerPositionLists).
-	def _hasPlayedEnoughGamesForPointsPerMatch(self, playerData):
+	# reliable starter under either per-match stat (see
+	# PER_MATCH_SQUAD_OPTIMIZATION_STATS, _buildFilteredPlayerPositionLists).
+	def _hasPlayedEnoughGamesForPerMatchStat(self, playerData):
 		gamesPlayed = sum(1 for weekIdx in range(1, self.lastCompletedGameWeek + 1)
 						  if weekIdx in playerData.gameWeekTbl and playerData.gameWeekTbl[weekIdx].statTbl[StatType.MINUTES_PLAYED] > 0)
 		return gamesPlayed * 2 >= self.lastCompletedGameWeek
 
 	# Returns a fresh list of per-position player lists passing the exclusion
 	# filters (excluded_players/excluded_teams, must have scored this season,
-	# and - under points_per_match - must have played at least half the
-	# season's gameweeks; all unless in curSquadPlayerIds). No dominance
-	# pruning, no sorting: reused unpruned by the random squad generator,
-	# which doesn't need the search-space reduction that
+	# and - under a per-match squadOptimizationStat - must have played at
+	# least half the season's gameweeks; all unless in curSquadPlayerIds). No
+	# dominance pruning, no sorting: reused unpruned by the random squad
+	# generator, which doesn't need the search-space reduction that
 	# _createPlayerPositionTbl's pruning below provides, and shouldn't lose
 	# cheap differentials to it.
 	def _buildFilteredPlayerPositionLists(self, curSquadPlayerIds):
@@ -786,12 +822,12 @@ class Analyzer:
 		# self.objectiveTbl overrides squadOptimizationStat entirely (see
 		# _getSquadObjectiveValue - used by getBestSquadForWeek), so the games-played
 		# filter below must sit out whenever it's set, same as that method does.
-		checkGamesPlayed = self.objectiveTbl is None and self.squadOptimizationStat == 'points_per_match'
+		checkGamesPlayed = self.objectiveTbl is None and self.squadOptimizationStat in PER_MATCH_SQUAD_OPTIMIZATION_STATS
 		for name,playerData in self.playerNameTbl.items():
 			# skip players with no points
 			if playerData.totalPoints <= 0 and playerData.playerId not in curSquadPlayerIds:
 				continue
-			if checkGamesPlayed and playerData.playerId not in curSquadPlayerIds and not self._hasPlayedEnoughGamesForPointsPerMatch(playerData):
+			if checkGamesPlayed and playerData.playerId not in curSquadPlayerIds and not self._hasPlayedEnoughGamesForPerMatchStat(playerData):
 				continue
 			# NOTE: the following exclusion reasons supercede keeping players on the current squad
 			if playerData.name in self.playersToExclude:
@@ -945,23 +981,32 @@ class Analyzer:
 					testValueSum += self._getSquadObjectiveValue(self.playerPositionTbl[posIdx][i])
 		return (testValueSum <= curToBestValueDiff)
 	
+	# squadOptimizationStat -> (column header, per-player value getter) for the
+	# extra column _writeBestSquadToFile shows under a per-match stat.
+	def _getPerMatchColumnInfo(self):
+		if self.squadOptimizationStat == 'average_points_per_match':
+			return ("Average Points Per Match", lambda playerData: playerData.averagePointsPerMatch)
+		if self.squadOptimizationStat == 'median_points_per_match':
+			return ("Median Points Per Match", self._getMedianPointsPerMatch)
+		return None
+
 	def _writeBestSquadToFile(self, bestSquadData, outFn):
 		# write outfile
 		totalPoints = 0
-		showPointsPerMatch = (self.squadOptimizationStat == 'points_per_match')
+		perMatchColumn = self._getPerMatchColumnInfo()
 		with open(outFn,'w') as fOut:
 			for posIdx in range(len(bestSquadData.positionTbl)):
 				fOut.write("%s\n" % self.positionIdTbl[posIdx+1])
 				header = "Name\tClub\tCost\tTotal Points"
-				if showPointsPerMatch:
-					header += "\tPoints Per Match"
+				if perMatchColumn is not None:
+					header += "\t%s" % perMatchColumn[0]
 				fOut.write("%s\n" % header)
 				for playerData in bestSquadData.positionTbl[posIdx]:
 					totalPoints += playerData.totalPoints
 					clubName = self.teamIdTbl[playerData.teamId].name
 					line = "%s\t%s\t%.1f\t%d" % (playerData.name, clubName, playerData.nowCost/10.0, playerData.totalPoints)
-					if showPointsPerMatch:
-						line += "\t%.1f" % playerData.pointsPerMatch
+					if perMatchColumn is not None:
+						line += "\t%.1f" % perMatchColumn[1](playerData)
 					fOut.write("%s\n" % line)
 				fOut.write("\n")
 		assert totalPoints == bestSquadData.totalPoints
@@ -1182,8 +1227,9 @@ class Analyzer:
 		return bestSquadData
 
 	def findBestSquad(self, outFn, squadStat='total_points', outSquadJsonFn=None):
-		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
+		assert squadStat in VALID_SQUAD_OPTIMIZATION_STATS, f"Unknown squadStat: {squadStat}"
 		self.squadOptimizationStat = squadStat
+		self._medianPointsPerMatchCache = dict() # lastCompletedGameWeek may have changed since the last call
 		self._resolveRequiredPlayers()
 		bestSquadData = self._searchBestSquad(outFn)
 		if outSquadJsonFn is not None:
@@ -1267,8 +1313,9 @@ class Analyzer:
 		return (self.inputSquadData.totalPoints, activeSquadPoints)
 
 	def findBestTransferOptions(self, squadFn, maxNumTransfers, outFn, squadStat='total_points', outSquadJsonFn=None):
-		assert squadStat in ('total_points', 'points_per_match'), f"Unknown squadStat: {squadStat}"
+		assert squadStat in VALID_SQUAD_OPTIMIZATION_STATS, f"Unknown squadStat: {squadStat}"
 		self.squadOptimizationStat = squadStat # also defensive: never inherit a stat left over from a prior findBestSquad call on this instance
+		self._medianPointsPerMatchCache = dict() # lastCompletedGameWeek may have changed since the last call
 		self.inputSquadData = SquadData(self.numPositions)
 		self.inputSquadPlayers = set()
 		self.maxNumTransfers = maxNumTransfers

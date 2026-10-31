@@ -12,7 +12,7 @@ if __name__ == '__main__':
 	parser.add_argument('-c', '--configFile', required=False, help='Name of the file that configures analysis (e.g. which players to exclude)')
 	parser.add_argument('--inputSquad', required=False, help='Name of file containing input squad. If provided, will output best transfer choices.')
 	parser.add_argument('--maxNumTransfers', required=False, help='Maximum number of transfers allowed from input squad. If specified, will find best transfers instead of best overall team.')
-	parser.add_argument('--squadStat', required=False, default='total_points', choices=['total_points', 'points_per_match'], help='Stat findBestSquad/findBestTransferOptions optimizes for when choosing the 15-man squad. Defaults to total_points.')
+	parser.add_argument('--squadStat', required=False, default='total_points', choices=list(analyzer.VALID_SQUAD_OPTIMIZATION_STATS), help='Stat findBestSquad/findBestTransferOptions optimizes for when choosing the 15-man squad. Defaults to total_points.')
 	parser.add_argument('--outputSquadJSON', required=False, help='Name of file to which the resulting squad will be written as json, in the same format as the --inputSquad file. For best transfers, this is the input squad with the transfers applied.')
 	args = parser.parse_args()
 

@@ -34,19 +34,19 @@ def _build_analyzer():
     a.lastCompletedGameWeek = 1  # required: _evaluateStrategy (called from _writeBestSquadToFile)
     # unconditionally does a week-1 lookup before checking lastCompletedGameWeek's loop range
 
-    def addPlayer(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch, weekPoints):
-        playerData = analyzer.PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch)
+    def addPlayer(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch, weekPoints):
+        playerData = analyzer.PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch)
         playerData.updateGameWeekTbl(1, weekPoints, nowCost, minutesPlayed=90)
         a.playerNameTbl[playerData.name] = playerData
 
     # GK: A has more total points, B is cheaper with a higher points-per-match
-    addPlayer("PlayerA", "Alpha", 101, totalPoints=10, nowCost=35, teamId=1, positionId=1, pointsPerMatch=2.0, weekPoints=10)
-    addPlayer("PlayerB", "Beta", 102, totalPoints=8, nowCost=25, teamId=1, positionId=1, pointsPerMatch=8.0, weekPoints=8)
+    addPlayer("PlayerA", "Alpha", 101, totalPoints=10, nowCost=35, teamId=1, positionId=1, averagePointsPerMatch=2.0, weekPoints=10)
+    addPlayer("PlayerB", "Beta", 102, totalPoints=8, nowCost=25, teamId=1, positionId=1, averagePointsPerMatch=8.0, weekPoints=8)
     # DEF/MID: sole candidates, always picked regardless of objective
-    addPlayer("PlayerC", "Gamma", 103, totalPoints=5, nowCost=20, teamId=1, positionId=2, pointsPerMatch=5.0, weekPoints=5)
-    addPlayer("PlayerD", "Delta", 104, totalPoints=5, nowCost=20, teamId=1, positionId=3, pointsPerMatch=5.0, weekPoints=5)
+    addPlayer("PlayerC", "Gamma", 103, totalPoints=5, nowCost=20, teamId=1, positionId=2, averagePointsPerMatch=5.0, weekPoints=5)
+    addPlayer("PlayerD", "Delta", 104, totalPoints=5, nowCost=20, teamId=1, positionId=3, averagePointsPerMatch=5.0, weekPoints=5)
     # FWD: sole candidate, different team so team1 stays at exactly 3 (maxNumPlayersPerTeam default)
-    addPlayer("PlayerE", "Epsilon", 105, totalPoints=5, nowCost=20, teamId=2, positionId=4, pointsPerMatch=5.0, weekPoints=5)
+    addPlayer("PlayerE", "Epsilon", 105, totalPoints=5, nowCost=20, teamId=2, positionId=4, averagePointsPerMatch=5.0, weekPoints=5)
 
     return a
 
@@ -71,10 +71,10 @@ def test_total_points_objective_picks_higher_scoring_gk(tmp_path, capsys):
     assert totalPoints == 25  # 10 (A) + 5 + 5 + 5
 
 
-def test_points_per_match_objective_picks_better_ppm_gk(tmp_path, capsys):
+def test_average_points_per_match_objective_picks_better_ppm_gk(tmp_path, capsys):
     a = _build_analyzer()
     outFn = tmp_path / "out_ppm.txt"
-    a.findBestSquad(str(outFn), squadStat='points_per_match')
+    a.findBestSquad(str(outFn), squadStat='average_points_per_match')
 
     # B is strictly cheaper AND has a higher points-per-match than A, so A is
     # dominance-pruned in _createPlayerPositionTbl itself - real proof the
@@ -85,7 +85,7 @@ def test_points_per_match_objective_picks_better_ppm_gk(tmp_path, capsys):
     content = outFn.read_text()
     assert GK_B in content
     assert GK_A not in content
-    assert "Points Per Match" in content
+    assert "Average Points Per Match" in content
     assert "8.0" in content  # PlayerB's points-per-match value
 
     printed = capsys.readouterr().out
@@ -123,7 +123,7 @@ def _build_analyzer_with_a_small_sample_gk():
     # 4-gameweek season. GK_FLASH has a higher points-per-match than GK_REGULAR,
     # but only played 1 of the 4 weeks (0 minutes - i.e. no gameWeekTbl entry at
     # all - the other 3), so it's fewer than half: should be excluded from
-    # points_per_match optimization entirely, regardless of its ppm value.
+    # points-per-match optimization entirely, regardless of its ppm value.
     a = analyzer.Analyzer()
     a.teamIdTbl = {1: analyzer.TeamData("Team One", 1), 2: analyzer.TeamData("Team Two", 2)}
     a.budget = 100
@@ -134,32 +134,32 @@ def _build_analyzer_with_a_small_sample_gk():
     a.fullSquadSize = 4
     a.lastCompletedGameWeek = 4
 
-    def addPlayer(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch, weeksPlayed):
-        playerData = analyzer.PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, pointsPerMatch)
+    def addPlayer(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch, weeksPlayed):
+        playerData = analyzer.PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch)
         for weekIdx, weekPoints in weeksPlayed:
             playerData.updateGameWeekTbl(weekIdx, weekPoints, nowCost, minutesPlayed=90)
         a.playerNameTbl[playerData.name] = playerData
 
     addPlayer("PlayerF", "Foxtrot", 106, totalPoints=20, nowCost=20, teamId=1, positionId=1,
-              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5), (3, 5), (4, 5)])
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5), (3, 5), (4, 5)])
     addPlayer("PlayerG", "Golf", 107, totalPoints=12, nowCost=15, teamId=1, positionId=1,
-              pointsPerMatch=12.0, weeksPlayed=[(1, 12)])
+              averagePointsPerMatch=12.0, weeksPlayed=[(1, 12)])
     # DEF/MID/FWD are sole candidates, each played exactly half the season (2 of
     # 4 weeks) - just enough to survive the games-played filter too.
     addPlayer("PlayerC", "Gamma", 103, totalPoints=10, nowCost=20, teamId=1, positionId=2,
-              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
     addPlayer("PlayerD", "Delta", 104, totalPoints=10, nowCost=20, teamId=2, positionId=3,
-              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
     addPlayer("PlayerE", "Epsilon", 105, totalPoints=10, nowCost=20, teamId=2, positionId=4,
-              pointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5)])
 
     return a
 
 
-def test_points_per_match_excludes_players_who_played_fewer_than_half_the_games(tmp_path):
+def test_average_points_per_match_excludes_players_who_played_fewer_than_half_the_games(tmp_path):
     a = _build_analyzer_with_a_small_sample_gk()
     outFn = tmp_path / "out_ppm_small_sample.txt"
-    a.findBestSquad(str(outFn), squadStat='points_per_match')
+    a.findBestSquad(str(outFn), squadStat='average_points_per_match')
 
     # GK_FLASH's higher ppm never even gets to compete - it's filtered out before
     # dominance pruning or the DFS see it.
@@ -171,11 +171,94 @@ def test_points_per_match_excludes_players_who_played_fewer_than_half_the_games(
     assert GK_FLASH not in content
 
 
+def test_median_points_per_match_excludes_players_who_played_fewer_than_half_the_games(tmp_path):
+    # Same games-played filter applies to median_points_per_match too.
+    a = _build_analyzer_with_a_small_sample_gk()
+    outFn = tmp_path / "out_median_small_sample.txt"
+    a.findBestSquad(str(outFn), squadStat='median_points_per_match')
+
+    assert len(a.playerPositionTbl[0]) == 1
+    assert a.playerPositionTbl[0][0].name == GK_REGULAR
+
+    content = outFn.read_text()
+    assert GK_REGULAR in content
+    assert GK_FLASH not in content
+
+
 def test_total_points_keeps_players_with_few_games(tmp_path):
-    # the games-played filter only applies under points_per_match - total_points
+    # the games-played filter only applies under a per-match stat - total_points
     # optimization must still be able to pick GK_FLASH.
     a = _build_analyzer_with_a_small_sample_gk()
     outFn = tmp_path / "out_total_points_small_sample.txt"
     a.findBestSquad(str(outFn), squadStat='total_points')
 
     assert len(a.playerPositionTbl[0]) == 2
+
+
+GK_H, GK_I = "PlayerH Hotel", "PlayerI India"
+
+
+def _build_analyzer_for_average_vs_median():
+    # GK_H's one huge match drags its average up but not its median; GK_I is
+    # perfectly consistent, so average and median rank these two GKs in
+    # opposite order - proof median_points_per_match is computed from the
+    # week-by-week data (not just reusing averagePointsPerMatch).
+    a = analyzer.Analyzer()
+    a.teamIdTbl = {1: analyzer.TeamData("Team One", 1), 2: analyzer.TeamData("Team Two", 2)}
+    a.budget = 100
+    a.positionCountTbl = [1, 1, 1, 1]
+    a.minPositionCountTbl = [1, 1, 1, 1]
+    a.maxPositionCountTbl = [1, 1, 1, 1]
+    a.startingSquadSize = 4
+    a.fullSquadSize = 4
+    a.lastCompletedGameWeek = 3
+
+    def addPlayer(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch, weeksPlayed):
+        playerData = analyzer.PlayerData(firstName, lastName, playerId, totalPoints, nowCost, teamId, positionId, averagePointsPerMatch)
+        for weekIdx, weekPoints in weeksPlayed:
+            playerData.updateGameWeekTbl(weekIdx, weekPoints, nowCost, minutesPlayed=90)
+        a.playerNameTbl[playerData.name] = playerData
+
+    # GK_H: weeks [1, 1, 100] -> mean 34.0, median 1.0. Same cost as GK_I, so
+    # whichever stat values it higher dominance-prunes the other outright.
+    addPlayer("PlayerH", "Hotel", 108, totalPoints=102, nowCost=20, teamId=1, positionId=1,
+              averagePointsPerMatch=34.0, weeksPlayed=[(1, 1), (2, 1), (3, 100)])
+    # GK_I: weeks [10, 10, 10] -> mean 10.0, median 10.0.
+    addPlayer("PlayerI", "India", 109, totalPoints=30, nowCost=20, teamId=1, positionId=1,
+              averagePointsPerMatch=10.0, weeksPlayed=[(1, 10), (2, 10), (3, 10)])
+    # DEF/MID/FWD: sole candidates, played every week.
+    addPlayer("PlayerC", "Gamma", 103, totalPoints=15, nowCost=20, teamId=1, positionId=2,
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5), (3, 5)])
+    addPlayer("PlayerD", "Delta", 104, totalPoints=15, nowCost=20, teamId=2, positionId=3,
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5), (3, 5)])
+    addPlayer("PlayerE", "Epsilon", 105, totalPoints=15, nowCost=20, teamId=2, positionId=4,
+              averagePointsPerMatch=5.0, weeksPlayed=[(1, 5), (2, 5), (3, 5)])
+
+    return a
+
+
+def test_average_points_per_match_prefers_the_one_big_week(tmp_path):
+    # Equal cost, so this exercises the DFS's own branch-and-bound comparison
+    # (not dominance pruning, which - for equal-cost candidates - only ever
+    # catches the loser if it happens to sort before the winner).
+    a = _build_analyzer_for_average_vs_median()
+    outFn = tmp_path / "out_avg.txt"
+    a.findBestSquad(str(outFn), squadStat='average_points_per_match')
+
+    content = outFn.read_text()
+    assert GK_H in content
+    assert GK_I not in content
+    assert "Average Points Per Match" in content
+    assert "34.0" in content
+
+
+def test_median_points_per_match_prefers_the_consistent_scorer(tmp_path):
+    a = _build_analyzer_for_average_vs_median()
+    outFn = tmp_path / "out_median.txt"
+    a.findBestSquad(str(outFn), squadStat='median_points_per_match')
+
+    content = outFn.read_text()
+    assert GK_I in content
+    assert GK_H not in content
+    assert "Median Points Per Match" in content
+    assert "10.0" in content
