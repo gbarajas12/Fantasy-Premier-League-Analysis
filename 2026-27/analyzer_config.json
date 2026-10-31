@@ -1,6 +1,8 @@
 {
+	"excluded_players": ["João Pedro Junqueira de Jesus"],
 	"excluded_players": [],
 	"excluded_teams": [],
+	"required_players": ["Morgan Rogers"],
 	"required_players": [],
 	"budget": 1000,
 	"season": "2026-27",

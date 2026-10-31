@@ -9,11 +9,12 @@ import strategies
 # set in lib/strategies.py (compareStrategies.py) because it takes a long time to run.
 # Edit these to change the wildcard strategy sweep. Windows are in gameweeks; a wildcard schedule is the
 # gameweeks the chip is played in (see strategies.buildStrategies for the names).
-SQUAD_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
-TRANSFER_FORM_WINDOWS = [3, 5, 10, 12, 15, 20, 25]
-WILDCARD_WINDOWS = [10]
+SQUAD_FORM_WINDOWS = [1, 5, 10, 15, 20, 25, 30, 35, 38]
+TRANSFER_FORM_WINDOWS = [1, 5, 10, 15, 20, 25, 30, 35, 38]
+WILDCARD_WINDOWS = TRANSFER_FORM_WINDOWS
 # every wildcard in gameweeks 2-19 with every wildcard in gameweeks 20-38
-WILDCARD_SCHEDULES = [[firstHalfWeek, secondHalfWeek] for firstHalfWeek in range(2, 20) for secondHalfWeek in range(20, 39)]
+WILDCARD_SCHEDULES = [[firstHalfWeek, secondHalfWeek] for firstHalfWeek in range(2, 20) for secondHalfWeek in [30]]
+#WILDCARD_SCHEDULES = [[firstHalfWeek, secondHalfWeek] for firstHalfWeek in range(2, 20) for secondHalfWeek in range(20, 39)]
 
 
 def buildWildcardSweepStrategies():

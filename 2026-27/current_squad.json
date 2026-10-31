@@ -1,26 +1,26 @@
 {
 	"keepers": [
-		"David Raya Martín",
-		"Caoimhín Kelleher"
+		"Konstantinos Tzolakis",
+		"Bart Verbruggen"
 	],
 	"defenders": [
-		"Gabriel dos Santos Magalhães",
-		"Marc Guéhi",
-		"Semi Ajayi",
+		"Maxim De Cuyper",
+		"James Tarkowski",
+		"Joško Gvardiol",
 		"Jayden Bogle",
-		"Tyrick Mitchell"
+		"Riccardo Calafiori"
 	],
 	"midfielders": [
-		"Elliot Anderson",
-		"Cody Gakpo",
-		"Enzo Le Fée",
-		"Ethan Ampadu",
-		"Alex Scott"
+		"Rayan Cherki",
+		"Kevin Schade",
+		"Morgan Rogers",
+		"Mohamed Belloumi",
+		"Pascal Groß"
 	],
 	"forwards": [
 		"Erling Haaland",
 		"João Pedro Junqueira de Jesus",
-		"Dominic Calvert-Lewin"
+		"Emersonn Correia da Silva"
 	],
-	"bank": 1.4
+	"bank": 0.4
 }
